@@ -10,6 +10,7 @@ from mindx.sdk import base
 
 from .config import Config
 from .models import MindXModel, post_process_det
+from .tracker import Tracker
 
 
 class InferenceEngine:
@@ -37,6 +38,13 @@ class InferenceEngine:
         # 当前视频源（动态设置）
         self.current_video_path = None
 
+        # 跟踪器相关 START----
+        self.tracker = Tracker()
+        self.tracking_event = threading.Event()
+        self.frame_count = 0
+        self.max_frames = self.config.get("TRACK_MAX_FRAMES")
+        self.final_centers = None
+        # 跟踪器相关 END----
     def set_video_source(self, video_path):
         with self.lock:
             self.current_video_path = video_path
@@ -169,6 +177,17 @@ class InferenceEngine:
                 iou_thres = self.config.get("IOU_THRES")
                 boxes, _ = post_process_det(det_raw, (w, h), conf_thres, iou_thres, det_size)
 
+                # 跟踪器相关 START----
+                if self.tracking_event.is_set():
+                    # 跟踪模式：更新跟踪器
+                    self.tracker.update(boxes.tolist())
+                    self.frame_count += 1
+                    if self.frame_count >= self.max_frames:
+                        self.final_centers = self.tracker.get_final_centers()
+                        self.tracking_event.clear()
+                        self.frame_count = 0
+                        print(f" [Tracker] 跟踪完成，最终目标数: {len(self.final_centers)}")
+                # 跟踪器相关 END----
                 cls_ids = []
                 if len(boxes) > 0:
                     cls_size = tuple(self.config.get("CLS_SIZE"))
@@ -237,6 +256,13 @@ class InferenceEngine:
                     color,
                     2,
                 )
+
+            # 绘制标定后的中心点和ID ---- 约降低 3 FPS
+            if self.final_centers:
+                for track_id, center in self.final_centers.items():
+                    x, y = center
+                    cv2.circle(frame, (x, y), 5, (255, 0, 0), -1)  # 蓝色圆点
+                    cv2.putText(frame, str(track_id), (x + 10, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
 
             # 2. FPS 统计
             now = time.perf_counter()

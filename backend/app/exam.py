@@ -2,7 +2,7 @@ import json
 import time
 import threading
 from typing import Optional
-
+from .tracker import Tracker
 class ExamManager:
     """考试管理器"""
 
@@ -21,6 +21,8 @@ class ExamManager:
         self.classroom_id: Optional[int] = None  # 教室ID
         self.start_time: Optional[float] = None  # 考试开始时间
         self.timer_thread: Optional[threading.Thread] = None  # 自动停止计时器线程
+        self.track_timer: Optional[threading.Timer] = None  # 跟踪启动定时器
+        self.student_count = 0  # 考生数
 
     def load_classrooms(self):
         """加载教室信息从classrooms.json"""
@@ -84,6 +86,7 @@ class ExamManager:
             self.duration = duration_sec
             self.classroom_id = classroom_id
             self.start_time = time.time()
+            self.student_count = 0  # 重置考生数
 
             # 重置取消事件
             self.cancel_event.clear()
@@ -91,6 +94,10 @@ class ExamManager:
             # 启动计时器线程以在时长后自动停止
             self.timer_thread = threading.Thread(target=self._auto_stop_timer, daemon=True)
             self.timer_thread.start()
+
+            # 启动跟踪定时器
+            self.track_timer = threading.Timer(self.engine.config.get("TRACK_DELAY_SECONDS"), self._start_tracking)
+            self.track_timer.start()
 
     def stop_exam(self):
         """停止考试
@@ -109,14 +116,40 @@ class ExamManager:
             # 设置取消事件以停止计时器线程
             self.cancel_event.set()
 
+            # 取消跟踪定时器
+            if self.track_timer and self.track_timer.is_alive():
+                self.track_timer.cancel()
+            self.track_timer = None
+
+            # 清空跟踪结果
+            self.engine.final_centers = None
+            self.engine.tracker = Tracker()  # 重置跟踪器
+
             # 重置考试状态
             self.exam_running = False
             self.subject = None
             self.duration = None
             self.classroom_id = None
             self.start_time = None
+            self.student_count = 0  # 重置考生数
             if self.timer_thread and self.timer_thread.is_alive():
                 self.timer_thread = None  # 让它自然死亡
+
+    def _start_tracking(self):
+        """启动跟踪"""
+        with self.lock:
+            if self.exam_running:
+                self.engine.tracker = Tracker()  # 重置跟踪器
+                self.engine.final_centers = None
+                self.engine.frame_count = 0
+                self.engine.tracking_event.set()
+                print(f"[Tracker] Started tracking for {self.engine.max_frames} frames")
+
+    def get_student_count(self):
+        """获取考生数，根据标定结果的中心点个数"""
+        if self.engine.final_centers:
+            self.student_count = len(self.engine.final_centers)
+        return self.student_count
 
     def _auto_stop_timer(self):
         """自动停止计时器，在考试时长结束后停止考试"""

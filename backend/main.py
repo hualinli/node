@@ -93,10 +93,6 @@ static_dir = os.path.join(config.get_path("FRONTEND_PATH"), "static")
 if os.path.exists(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
-
-
-
-
 @app.get("/")
 async def index():
     index_path = os.path.join(config.get_path("FRONTEND_PATH"), "index.html")
@@ -170,6 +166,21 @@ def stop_exam():
     try:
         exam_manager.stop_exam()
         return {"success": True}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
+
+@app.get("/exam/status")
+def get_exam_status():
+    try:
+        return {
+            "success": True,
+            "exam_running": exam_manager.exam_running,
+            "subject": exam_manager.subject,
+            "duration": exam_manager.duration,
+            "classroom_id": exam_manager.classroom_id,
+            "start_time": exam_manager.start_time,
+            "student_count": exam_manager.get_student_count()
+        }
     except Exception as e:
         return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
 
