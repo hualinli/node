@@ -1,0 +1,162 @@
+node/frontend/index.html
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Exam Control</title>
+    <style>
+        body { font-family: Arial, sans-serif; text-align: center; padding: 20px; }
+        img { max-width: 100%; height: auto; border: 1px solid #ccc; }
+        input, button { margin: 10px; padding: 10px; }
+        button:disabled { background-color: #ccc; cursor: not-allowed; }
+    </style>
+</head>
+<body>
+    <h1>Exam Control</h1>
+    <img id="stream" src="/stream" alt="MJPEG Stream">
+    <br>
+    <select id="classroomSelect">
+        <option value="">Select a classroom...</option>
+    </select>
+    <br>
+    <input type="text" id="subject" placeholder="Subject" required>
+    <input type="number" id="duration" placeholder="Duration (minutes)" required>
+    <br>
+    <button id="startExam">Start Exam</button>
+    <button id="stopExam">Stop Exam</button>
+
+    <script>
+        const stream = document.getElementById('stream');
+        const classroomSelect = document.getElementById('classroomSelect');
+        const subject = document.getElementById('subject');
+        const duration = document.getElementById('duration');
+        const startExam = document.getElementById('startExam');
+        const stopExam = document.getElementById('stopExam');
+
+        // Function to update button states based on status
+        function updateButtons(status) {
+            // Assuming exam status is not directly available, disable start if inferring, etc.
+            // For simplicity, enable both, or add logic later
+            startExam.disabled = false;
+            stopExam.disabled = false;
+        }
+
+        // Fetch status and update buttons
+        function fetchStatus() {
+            fetch('/status')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        updateButtons(data.data);
+                    } else {
+                        console.error('Error fetching status:', data.error);
+                    }
+                })
+                .catch(err => console.error('Error fetching status:', err));
+        }
+
+        // Initial fetch on load
+        fetchStatus();
+        fetchClassrooms();
+
+        // Poll status every 1 second
+        setInterval(fetchStatus, 1000);
+
+        let selectedClassroom = null;
+
+        // Function to fetch classrooms and populate select
+        function fetchClassrooms() {
+            fetch('/classrooms')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success && data.classrooms.length > 0) {
+                        data.classrooms.forEach(classroom => {
+                            const option = document.createElement('option');
+                            option.value = classroom.id;
+                            option.textContent = `${classroom.building} ${classroom.name}`;
+                            option.classroom = classroom; // Store classroom object
+                            classroomSelect.appendChild(option);
+                        });
+                    } else {
+                        console.error('No classrooms found or error fetching classrooms:', data);
+                    }
+                })
+                .catch(err => {
+                    console.error('Error fetching classrooms:', err);
+                });
+        }
+
+        // Event listener for classroom selection
+        classroomSelect.addEventListener('change', () => {
+            const selectedOption = classroomSelect.options[classroomSelect.selectedIndex];
+            selectedClassroom = selectedOption.classroom;
+            if (selectedClassroom) {
+                fetch(`/cmd/set_video/${encodeURIComponent(selectedClassroom.url)}`)
+                    .then(response => response.json())
+                    .then(setData => {
+                        if (setData.success) {
+                            console.log('Video source set to selected classroom URL:', setData);
+                        } else {
+                            console.error('Error setting video source:', setData.error);
+                            alert('Failed to set video source: ' + setData.error);
+                        }
+                    })
+                    .catch(err => {
+                        console.error('Error setting video source:', err);
+                        alert('Failed to set video source.');
+                    });
+            } else {
+                selectedClassroom = null;
+            }
+        });
+
+        startExam.addEventListener('click', () => {
+            const subj = subject.value.trim();
+            const dur = parseInt(duration.value);
+            if (!subj || !dur || !selectedClassroom) {
+                alert('Please fill in all fields and select a classroom.');
+                return;
+            }
+            fetch('/exam/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ subject: subj, duration: dur, classroom_id: selectedClassroom.id })
+            })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('Exam started successfully.');
+                        stream.src = '/stream?t=' + Date.now();  // Refresh MJPEG stream
+                        fetchStatus();
+                    } else {
+                        console.error('Error starting exam:', data.error);
+                        alert('Failed to start exam: ' + data.error);
+                    }
+                })
+                .catch(err => {
+                    console.error('Error starting exam:', err);
+                    alert('Failed to start exam.');
+                });
+        });
+
+        stopExam.addEventListener('click', () => {
+            fetch('/exam/stop')
+                .then(response => response.json())
+                .then(data => {
+                    if (data.success) {
+                        alert('Exam stopped successfully.');
+                        fetchStatus();
+                    } else {
+                        console.error('Error stopping exam:', data.error);
+                        alert('Failed to stop exam: ' + data.error);
+                    }
+                })
+                .catch(err => {
+                    console.error('Error stopping exam:', err);
+                    alert('Failed to stop exam.');
+                });
+        });
+    </script>
+</body>
+</html>

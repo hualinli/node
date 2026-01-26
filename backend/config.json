@@ -1,0 +1,24 @@
+{
+    "DET_MODEL_PATH": "./backend/models/detect_1_stc.om",
+    "CLS_MODEL_PATH": "./backend/models/classify_96_stc.om",
+    "DET_SIZE": [640, 640],
+    "CLS_SIZE": [64, 64],
+    "CLS_BATCH": 96,
+    "CONF_THRES": 0.25,
+    "IOU_THRES": 0.45,
+    "DEVICE_ID": 0,
+    "QUEUE_SIZE": 10,
+    "class_names": ["Head", "Limb", "Sleep", "Stand", "Normal"],
+    "class_colors": [
+        [255, 0, 0],
+        [0, 255, 0],
+        [0, 0, 255],
+        [255, 255, 0],
+        [255, 0, 255]
+    ],
+
+    "FRONTEND_PATH": "./frontend",
+    "FPS_WINDOW_SIZE": 30,
+    "JPEG_QUALITY": 100,
+    "JPEG_WIDTH": null
+}

@@ -1,0 +1,17 @@
+{
+    "version": "1.0",
+    "classrooms": [
+        {
+            "id": 1,
+            "building": "正心",
+            "name": "101",
+            "url": "/home/HwHiAiUser/project/new/clean.mp4"
+        },
+        {
+            "id": 2,
+            "building": "正心",
+            "name": "201",
+            "url": "rtsp://192.168.1.182:8554/mystream1"
+        }
+    ]
+}
