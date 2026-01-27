@@ -209,6 +209,14 @@ def get_anomalies():
     except Exception as e:
         return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
 
+@app.post("/exam/anomalies/reset")
+def reset_anomalies():
+    try:
+        exam_manager.reset_anomaly_counts()
+        return {"success": True}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
+
 
 
 # 教室管理部分

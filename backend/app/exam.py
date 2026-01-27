@@ -181,6 +181,14 @@ class ExamManager:
             self.student_count = len(self.engine.final_centers)
         return self.student_count
 
+    def reset_anomaly_counts(self):
+        """重置异常计数与相关跟踪状态"""
+        with self.lock:
+            self.anomaly_counts = {}
+            self.anomaly_snapshots = {}
+            self.snapshot_cooldown = {}
+            self.frame_counter = 0
+
     def update_anomaly(self, box, cls_id):
         """更新异常计数
 

@@ -59,6 +59,7 @@ node/frontend/index.html
         <br />
         <button id="startExam">Start Exam</button>
         <button id="stopExam">Stop Exam</button>
+        <button id="resetAnomalies">Reset Anomaly Counts</button>
 
         <h2>Anomaly Report</h2>
         <table id="anomalyTable">
@@ -79,6 +80,7 @@ node/frontend/index.html
             const duration = document.getElementById("duration");
             const startExam = document.getElementById("startExam");
             const stopExam = document.getElementById("stopExam");
+            const resetAnomalies = document.getElementById("resetAnomalies");
 
             // Function to update button states and UI based on exam status
             function updateButtons(data) {
@@ -243,6 +245,26 @@ node/frontend/index.html
                     .catch((err) => {
                         console.error("Error stopping exam:", err);
                         alert("Failed to stop exam.");
+                    });
+            });
+
+            resetAnomalies.addEventListener("click", () => {
+                fetch("/exam/anomalies/reset", { method: "POST" })
+                    .then((response) => response.json())
+                    .then((data) => {
+                        if (data.success) {
+                            fetchAnomalies();
+                        } else {
+                            console.error(
+                                "Error resetting anomalies:",
+                                data.error,
+                            );
+                            alert("Failed to reset anomalies: " + data.error);
+                        }
+                    })
+                    .catch((err) => {
+                        console.error("Error resetting anomalies:", err);
+                        alert("Failed to reset anomalies.");
                     });
             });
 
