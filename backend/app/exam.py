@@ -1,7 +1,9 @@
 import json
+import math
 import time
 import threading
 from typing import Optional
+import numpy as np
 from .tracker import Tracker
 class ExamManager:
     """考试管理器"""
@@ -23,6 +25,7 @@ class ExamManager:
         self.timer_thread: Optional[threading.Thread] = None  # 自动停止计时器线程
         self.track_timer: Optional[threading.Timer] = None  # 跟踪启动定时器
         self.student_count = 0  # 考生数
+        self.anomaly_counts = {}  # 异常情况计数 {seat_id: count}
 
     def load_classrooms(self):
         """加载教室信息从classrooms.json"""
@@ -87,6 +90,7 @@ class ExamManager:
             self.classroom_id = classroom_id
             self.start_time = time.time()
             self.student_count = 0  # 重置考生数
+            self.anomaly_counts = {}  # 重置异常计数
 
             # 重置取消事件
             self.cancel_event.clear()
@@ -132,6 +136,7 @@ class ExamManager:
             self.classroom_id = None
             self.start_time = None
             self.student_count = 0  # 重置考生数
+            self.anomaly_counts = {}  # 重置异常计数
             if self.timer_thread and self.timer_thread.is_alive():
                 self.timer_thread = None  # 让它自然死亡
 
@@ -150,6 +155,40 @@ class ExamManager:
         if self.engine.final_centers:
             self.student_count = len(self.engine.final_centers)
         return self.student_count
+
+    def update_anomaly(self, box, cls_id):
+        """更新异常计数
+
+        Args:
+            box: 检测框 [x1, y1, x2, y2]
+            cls_id: 分类ID
+        """
+        if not self.engine.final_centers:
+            return
+
+        # 计算异常框中心点
+        center_x = (box[0] + box[2]) / 2
+        center_y = (box[1] + box[3]) / 2
+        anomaly_center = np.array([center_x, center_y])
+
+        # 获取所有座位中心
+        centers = np.array(list(self.engine.final_centers.values()))
+        if len(centers) == 0:
+            return
+
+        # 计算距离
+        distances = np.linalg.norm(centers - anomaly_center, axis=1)
+        min_dist = np.min(distances)
+        closest_idx = np.argmin(distances)
+
+        # 获取座位ID
+        seat_ids = list(self.engine.final_centers.keys())
+        closest_seat = seat_ids[closest_idx]
+
+        # 如果距离不超过阈值，增加计数
+        threshold = self.engine.config.get("anomaly_match_threshold", 50)
+        if min_dist <= threshold:
+            self.anomaly_counts[closest_seat] = self.anomaly_counts.get(closest_seat, 0) + 1
 
     def _auto_stop_timer(self):
         """自动停止计时器，在考试时长结束后停止考试"""

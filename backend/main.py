@@ -29,6 +29,9 @@ engine = InferenceEngine(config)
 # 初始化考试管理器
 exam_manager = ExamManager(engine)
 
+# 设置引擎的考试管理器引用
+engine.exam_manager = exam_manager
+
 
 
 @asynccontextmanager
@@ -180,6 +183,28 @@ def get_exam_status():
             "classroom_id": exam_manager.classroom_id,
             "start_time": exam_manager.start_time,
             "student_count": exam_manager.get_student_count()
+        }
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
+
+@app.get("/exam/anomalies")
+def get_anomalies():
+    try:
+        centers = exam_manager.engine.final_centers or {}
+        anomalies = exam_manager.anomaly_counts
+        # 构建数据：按Id排序，包含坐标和计数
+        data = []
+        for seat_id in sorted(centers.keys()):
+            coord = centers[seat_id]
+            count = anomalies.get(seat_id, 0)
+            data.append({
+                "id": seat_id,
+                "coord": f"({coord[0]}, {coord[1]})",
+                "count": count
+            })
+        return {
+            "success": True,
+            "anomalies": data
         }
     except Exception as e:
         return JSONResponse(status_code=500, content={"success": False, "error": str(e)})

@@ -22,7 +22,7 @@ class RTMPStreamer:
         if not ascend_home:
             print("⚠ ASCEND_HOME not set, h264_ascend may fail")
 
-        # 2. 仅检查编码器列表（不运行时测试，避免超时）
+        # 2. 仅检查编码器列表
         try:
             result = subprocess.run(
                 ["ffmpeg", "-encoders"],

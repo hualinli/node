@@ -45,6 +45,9 @@ class InferenceEngine:
         self.max_frames = self.config.get("TRACK_MAX_FRAMES")
         self.final_centers = None
         # 跟踪器相关 END----
+
+        self.exam_manager = None  # 考试管理器引用
+        self.anomaly_update_counter = 0  # 异常更新计数器
     def set_video_source(self, video_path):
         with self.lock:
             self.current_video_path = video_path
@@ -236,6 +239,16 @@ class InferenceEngine:
                     self.fps = 0.0
                     self.frame_times = []
                 continue
+
+            # 更新异常计数
+            if self.exam_manager and self.exam_manager.exam_running:
+                self.anomaly_update_counter += 1
+                if self.anomaly_update_counter % 12 == 0:
+                    anomaly_classes = self.config.get("anomaly_classes", [0,1,2,3])
+                    for i, box in enumerate(boxes):
+                        cls_id = cls_ids[i] if i < len(cls_ids) else 0
+                        if cls_id in anomaly_classes:
+                            self.exam_manager.update_anomaly(box, cls_id)
 
             # 1. 绘图逻辑
 
