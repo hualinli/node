@@ -5,6 +5,7 @@ import threading
 from typing import Optional
 import numpy as np
 from .tracker import Tracker
+import os
 class ExamManager:
     """考试管理器"""
 
@@ -26,6 +27,10 @@ class ExamManager:
         self.track_timer: Optional[threading.Timer] = None  # 跟踪启动定时器
         self.student_count = 0  # 考生数
         self.anomaly_counts = {}  # 异常情况计数 {seat_id: count}
+        self.anomaly_snapshots = {}  # 异常截图跟踪 {seat_id: {cls_id: {'count': int, 'last_time': float}}}
+        self.snapshot_cooldown = {}  # 截图冷却 { (seat_id, cls_id): last_snapshot_frame }
+        self.frame_counter = 0  # 帧计数器，用于帧数冷却
+        self.current_snapshot_dir = None  # 当前考试的截图目录
 
     def load_classrooms(self):
         """加载教室信息从classrooms.json"""
@@ -91,6 +96,14 @@ class ExamManager:
             self.start_time = time.time()
             self.student_count = 0  # 重置考生数
             self.anomaly_counts = {}  # 重置异常计数
+            self.anomaly_snapshots = {}  # 重置异常截图跟踪
+            self.snapshot_cooldown = {}  # 重置截图冷却
+            self.frame_counter = 0  # 重置帧计数器
+
+            # 创建考试特定的截图目录
+            exam_id = f"{self.subject}_{self.classroom_id}_{int(self.start_time)}"
+            self.current_snapshot_dir = f"snapshots/{exam_id}"
+            os.makedirs(self.current_snapshot_dir, exist_ok=True)
 
             # 重置取消事件
             self.cancel_event.clear()
@@ -137,6 +150,18 @@ class ExamManager:
             self.start_time = None
             self.student_count = 0  # 重置考生数
             self.anomaly_counts = {}  # 重置异常计数
+            self.anomaly_snapshots = {}  # 重置异常截图跟踪
+            self.snapshot_cooldown = {}  # 重置截图冷却
+            self.frame_counter = 0  # 重置帧计数器
+
+            # 归档当前考试的截图
+            if self.current_snapshot_dir and os.path.exists(self.current_snapshot_dir):
+                archive_dir = f"archives/{os.path.basename(self.current_snapshot_dir)}"
+                os.makedirs("archives", exist_ok=True)
+                os.rename(self.current_snapshot_dir, archive_dir)
+                print(f"[Archive] Moved snapshots to {archive_dir}")
+            self.current_snapshot_dir = None
+
             if self.timer_thread and self.timer_thread.is_alive():
                 self.timer_thread = None  # 让它自然死亡
 
@@ -189,6 +214,94 @@ class ExamManager:
         threshold = self.engine.config.get("anomaly_match_threshold", 50)
         if min_dist <= threshold:
             self.anomaly_counts[closest_seat] = self.anomaly_counts.get(closest_seat, 0) + 1
+
+    def update_anomaly_snapshots(self, frame, anomalies, timestamp, current_frame=None):
+        """更新异常截图逻辑
+
+        Args:
+            frame: 当前帧
+            anomalies: 预计算的异常列表
+            timestamp: 当前时间戳
+            current_frame: 当前帧计数（外部传入）
+        """
+        if not self.engine.final_centers:
+            return
+
+        # 帧计数：优先使用外部传入，保证全局帧连续
+        if current_frame is None:
+            self.frame_counter += 1
+            current_frame = self.frame_counter
+        else:
+            self.frame_counter = current_frame
+
+        # 更新计数并检查截图条件
+        for anomaly in anomalies:
+            seat_id = anomaly['seat_id']
+            cls_id = anomaly['cls_id']
+
+            if seat_id not in self.anomaly_snapshots:
+                self.anomaly_snapshots[seat_id] = {}
+            if cls_id not in self.anomaly_snapshots[seat_id]:
+                self.anomaly_snapshots[seat_id][cls_id] = {'count': 0, 'last_time': timestamp, 'last_frame': None}
+
+            # 连续帧计数：断帧则重置
+            last_frame = self.anomaly_snapshots[seat_id][cls_id].get('last_frame')
+            if last_frame is None or current_frame != last_frame + 1:
+                self.anomaly_snapshots[seat_id][cls_id]['count'] = 1
+            else:
+                self.anomaly_snapshots[seat_id][cls_id]['count'] += 1
+            self.anomaly_snapshots[seat_id][cls_id]['last_time'] = timestamp
+            self.anomaly_snapshots[seat_id][cls_id]['last_frame'] = current_frame
+
+            # 检查是否超过阈值且不在冷却期（帧数）
+            threshold_frames = self.engine.config.get("snapshot_threshold_frames", 12)
+            cooldown_frames = self.engine.config.get("snapshot_cooldown_frames", 720)
+            count = self.anomaly_snapshots[seat_id][cls_id]['count']
+            cooldown_key = (seat_id, cls_id)
+            last_snapshot_frame = self.snapshot_cooldown.get(cooldown_key, 0)
+
+            if (
+                count >= threshold_frames
+                and (current_frame - last_snapshot_frame) >= cooldown_frames
+            ):
+                self.take_snapshot(frame.copy(), anomaly, timestamp)
+                self.snapshot_cooldown[cooldown_key] = current_frame
+                # 重置计数以重新积累
+                self.anomaly_snapshots[seat_id][cls_id]['count'] = 0
+
+    def take_snapshot(self, frame, anomaly, timestamp):
+        """保存异常截图
+
+        Args:
+            frame: 帧图像
+            anomaly: 异常信息 {'seat_id', 'cls_id', 'box', 'center'}
+            timestamp: 时间戳
+        """
+        import cv2
+        import os
+
+        seat_id = anomaly['seat_id']
+        cls_id = anomaly['cls_id']
+        box = anomaly['box']
+        center = anomaly['center']
+
+        # 获取座位的 x, y 坐标
+        seat_center = self.engine.final_centers.get(seat_id, (0, 0))
+        seat_x, seat_y = int(seat_center[0]), int(seat_center[1])
+
+        # 在帧上标出座位ID和异常类型
+        class_names = self.engine.config.get("class_names", ["Unknown"] * 10)
+        label = f"Seat {seat_id}: {class_names[cls_id] if cls_id < len(class_names) else 'Unknown'}"
+        cv2.putText(frame, label, (int(center[0]), int(center[1]) - 20), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
+        cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), (0, 0, 255), 2)
+
+        # 保存帧到当前考试目录
+        if self.current_snapshot_dir:
+            filename = f"{self.current_snapshot_dir}/snapshot_seat{seat_id}_x{seat_x}_y{seat_y}_cls{cls_id}_{int(timestamp)}.jpg"
+            cv2.imwrite(filename, frame)
+            print(f"[Snapshot] Saved anomaly snapshot: {filename}")
+        else:
+            print("[Snapshot] No current snapshot directory, skipping save")
 
     def _auto_stop_timer(self):
         """自动停止计时器，在考试时长结束后停止考试"""

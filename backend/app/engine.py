@@ -47,7 +47,6 @@ class InferenceEngine:
         # 跟踪器相关 END----
 
         self.exam_manager = None  # 考试管理器引用
-        self.anomaly_update_counter = 0  # 异常更新计数器
     def set_video_source(self, video_path):
         with self.lock:
             self.current_video_path = video_path
@@ -160,6 +159,8 @@ class InferenceEngine:
                 cls_buffer = np.zeros(
                     (cls_batch, cls_size[1], cls_size[0], 3), dtype=np.uint8
                 )
+                det_size = tuple(self.config.get("DET_SIZE"))
+                det_buffer = np.empty((1, det_size[1], det_size[0], 3), dtype=np.uint8)
                 self.is_inferring = True
             except Exception as e:
                 print(f" [Error] 模型加载失败: {e}")
@@ -173,9 +174,9 @@ class InferenceEngine:
                     continue
 
                 h, w = frame.shape[:2]
-                det_size = tuple(self.config.get("DET_SIZE"))
                 det_in = cv2.resize(frame, det_size)
-                det_raw = det_model.infer(np.expand_dims(det_in, axis=0))[0]
+                det_buffer[0] = det_in
+                det_raw = det_model.infer(det_buffer)[0]
                 conf_thres = self.config.get("CONF_THRES")
                 iou_thres = self.config.get("IOU_THRES")
                 boxes, _ = post_process_det(det_raw, (w, h), conf_thres, iou_thres, det_size)
@@ -240,23 +241,60 @@ class InferenceEngine:
                     self.frame_times = []
                 continue
 
-            # 更新异常计数
+            # 更新异常计数 + 收集异常截图候选并绘图
+            anomaly_classes = self.config.get("anomaly_classes", [0,1,2,3])
+            snapshot_classes = self.config.get("snapshot_classes", [0,1,2,3])
+            timestamp = time.time()
+            frame_for_snapshot = None
+            raw_frame_for_snapshot = None
+            anomaly_map = {}
+            anomalies = []
+            centers = None
+            seat_ids = None
+            threshold = self.config.get("anomaly_match_threshold", 50)
+            current_frame = None
             if self.exam_manager and self.exam_manager.exam_running:
-                self.anomaly_update_counter += 1
-                if self.anomaly_update_counter % 12 == 0:
-                    anomaly_classes = self.config.get("anomaly_classes", [0,1,2,3])
-                    for i, box in enumerate(boxes):
-                        cls_id = cls_ids[i] if i < len(cls_ids) else 0
-                        if cls_id in anomaly_classes:
-                            self.exam_manager.update_anomaly(box, cls_id)
+                raw_frame_for_snapshot = frame.copy()
+                if self.final_centers:
+                    centers = np.array(list(self.final_centers.values()))
+                    seat_ids = list(self.final_centers.keys())
+                with self.exam_manager.lock:
+                    self.exam_manager.frame_counter += 1
+                    current_frame = self.exam_manager.frame_counter
 
-            # 1. 绘图逻辑
-
-            # 绘制实时检测框
             class_names = self.config.get("class_names")
             class_colors = self.config.get("class_colors")
             for i, box in enumerate(boxes):
                 cls_id = cls_ids[i] if i < len(cls_ids) else 0
+
+                matched_seat = None
+                if centers is not None and len(centers) > 0:
+                    center_x = (box[0] + box[2]) / 2
+                    center_y = (box[1] + box[3]) / 2
+                    distances = np.linalg.norm(centers - np.array([center_x, center_y]), axis=1)
+                    min_dist = np.min(distances)
+                    if min_dist <= threshold:
+                        closest_idx = np.argmin(distances)
+                        matched_seat = seat_ids[closest_idx]
+
+                if matched_seat is not None:
+                    if cls_id in anomaly_classes:
+                        self.exam_manager.anomaly_counts[matched_seat] = self.exam_manager.anomaly_counts.get(matched_seat, 0) + 1
+                    if cls_id in snapshot_classes:
+                        if frame_for_snapshot is None:
+                            frame_for_snapshot = raw_frame_for_snapshot if raw_frame_for_snapshot is not None else frame.copy()
+                        key = (matched_seat, cls_id)
+                        if key not in anomaly_map:
+                            anomaly_map[key] = {
+                                'seat_id': matched_seat,
+                                'cls_id': cls_id,
+                                'box': box,
+                                'center': ((box[0] + box[2]) / 2, (box[1] + box[3]) / 2),
+                                'frame_id': self.frame_id
+                            }
+
+
+                # 绘制实时检测框
                 color = tuple(class_colors[cls_id]) if cls_id < len(class_colors) else (0, 255, 0)
                 cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), color, 2)
                 label = class_names[cls_id] if cls_id < len(class_names) else "Unknown"
@@ -270,12 +308,24 @@ class InferenceEngine:
                     2,
                 )
 
-            # 绘制标定后的中心点和ID ---- 约降低 3 FPS
-            if self.final_centers:
-                for track_id, center in self.final_centers.items():
-                    x, y = center
-                    cv2.circle(frame, (x, y), 5, (255, 0, 0), -1)  # 蓝色圆点
-                    cv2.putText(frame, str(track_id), (x + 10, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
+            if anomaly_map:
+                anomalies = list(anomaly_map.values())
+
+            if self.exam_manager and self.exam_manager.exam_running and anomalies:
+                # 更新异常截图（仅在有候选时）
+                self.exam_manager.update_anomaly_snapshots(
+                    frame_for_snapshot if frame_for_snapshot is not None else frame,
+                    anomalies,
+                    timestamp,
+                    current_frame,
+                )
+
+                # 绘制标定后的中心点和ID ---- 约降低 3 FPS
+                # if self.final_centers:
+                #     for track_id, center in self.final_centers.items():
+                #         x, y = center
+                #         cv2.circle(frame, (x, y), 5, (255, 0, 0), -1)  # 蓝色圆点
+                #         cv2.putText(frame, str(track_id), (x + 10, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (255, 0, 0), 2)
 
             # 2. FPS 统计
             now = time.perf_counter()

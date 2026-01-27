@@ -19,10 +19,13 @@
 
     "FRONTEND_PATH": "./frontend",
     "FPS_WINDOW_SIZE": 30,
-    "JPEG_QUALITY": 100,
+    "JPEG_QUALITY": 30,
     "JPEG_WIDTH": null,
     "TRACK_MAX_FRAMES": 100,
     "TRACK_DELAY_SECONDS": 10,
-    "anomaly_classes": [0, 1, 2, 3],
-    "anomaly_match_threshold": 50
+    "anomaly_classes": [0, 1, 2],
+    "anomaly_match_threshold": 50,
+    "snapshot_classes": [0, 1],
+    "snapshot_threshold_frames": 12,
+    "snapshot_cooldown_frames": 720
 }
