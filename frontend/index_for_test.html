@@ -1,0 +1,320 @@
+node/frontend/index.html
+<!doctype html>
+<html lang="en">
+    <head>
+        <meta charset="UTF-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <title>Exam Control</title>
+        <style>
+            body {
+                font-family: Arial, sans-serif;
+                text-align: center;
+                padding: 20px;
+            }
+            img {
+                max-width: 100%;
+                height: auto;
+                border: 1px solid #ccc;
+            }
+            input,
+            button {
+                margin: 10px;
+                padding: 10px;
+            }
+            button:disabled {
+                background-color: #ccc;
+                cursor: not-allowed;
+            }
+            table {
+                margin: 20px auto;
+                border-collapse: collapse;
+                width: 80%;
+            }
+            th,
+            td {
+                border: 1px solid #ddd;
+                padding: 8px;
+                text-align: center;
+            }
+            th {
+                background-color: #f2f2f2;
+            }
+        </style>
+    </head>
+    <body>
+        <h1>Exam Control</h1>
+        <img id="stream" src="/stream" alt="MJPEG Stream" />
+        <br />
+        <select id="classroomSelect">
+            <option value="">Select a classroom...</option>
+        </select>
+        <br />
+        <input type="text" id="subject" placeholder="Subject" required />
+        <input
+            type="number"
+            id="duration"
+            placeholder="Duration (minutes)"
+            required
+        />
+        <br />
+        <button id="startExam">Start Exam</button>
+        <button id="stopExam">Stop Exam</button>
+        <button id="resetAnomalies">Reset Anomaly Counts</button>
+        <button id="recalibrate">Recalibrate</button>
+
+        <h2>Anomaly Report</h2>
+        <table id="anomalyTable">
+            <thead>
+                <tr>
+                    <th>Id</th>
+                    <th>Coordinate</th>
+                    <th>Anomaly Count</th>
+                </tr>
+            </thead>
+            <tbody id="anomalyBody"></tbody>
+        </table>
+
+        <script>
+            const stream = document.getElementById("stream");
+            const classroomSelect = document.getElementById("classroomSelect");
+            const subject = document.getElementById("subject");
+            const duration = document.getElementById("duration");
+            const startExam = document.getElementById("startExam");
+            const stopExam = document.getElementById("stopExam");
+            const resetAnomalies = document.getElementById("resetAnomalies");
+            const recalibrate = document.getElementById("recalibrate");
+
+            // Function to update button states and UI based on exam status
+            function updateButtons(data) {
+                startExam.disabled = data.exam_running;
+                stopExam.disabled = !data.exam_running;
+                recalibrate.disabled = !data.exam_running;
+                if (data.exam_running) {
+                    subject.value = data.subject || "";
+                    duration.value = data.duration
+                        ? Math.ceil(data.duration / 60)
+                        : "";
+                    if (data.classroom_id) {
+                        classroomSelect.value = data.classroom_id;
+                        // Find and set selectedClassroom
+                        const options = classroomSelect.options;
+                        for (let i = 0; i < options.length; i++) {
+                            if (options[i].value == data.classroom_id) {
+                                selectedClassroom = options[i].classroom;
+                                break;
+                            }
+                        }
+                    }
+                }
+                // Do not clear fields when no exam is running, to allow user input
+            }
+
+            // Fetch exam status and update UI
+            function fetchStatus() {
+                fetch("/exam/status")
+                    .then((response) => response.json())
+                    .then((data) => {
+                        if (data.success) {
+                            updateButtons(data);
+                        } else {
+                            console.error(
+                                "Error fetching exam status:",
+                                data.error,
+                            );
+                        }
+                    })
+                    .catch((err) =>
+                        console.error("Error fetching exam status:", err),
+                    );
+            }
+
+            // Initial fetch on load
+            fetchStatus();
+            fetchClassrooms();
+            fetchAnomalies();
+
+            // Poll status every 1 second
+            setInterval(fetchStatus, 1000);
+            setInterval(fetchAnomalies, 1000);
+
+            let selectedClassroom = null;
+
+            // Function to fetch classrooms and populate select
+            function fetchClassrooms() {
+                fetch("/classrooms")
+                    .then((response) => response.json())
+                    .then((data) => {
+                        if (data.success && data.classrooms.length > 0) {
+                            data.classrooms.forEach((classroom) => {
+                                const option = document.createElement("option");
+                                option.value = classroom.id;
+                                option.textContent = `${classroom.building} ${classroom.name}`;
+                                option.classroom = classroom; // Store classroom object
+                                classroomSelect.appendChild(option);
+                            });
+                        } else {
+                            console.error(
+                                "No classrooms found or error fetching classrooms:",
+                                data,
+                            );
+                        }
+                    })
+                    .catch((err) => {
+                        console.error("Error fetching classrooms:", err);
+                    });
+            }
+
+            // Event listener for classroom selection
+            classroomSelect.addEventListener("change", () => {
+                const selectedOption =
+                    classroomSelect.options[classroomSelect.selectedIndex];
+                selectedClassroom = selectedOption.classroom;
+                if (selectedClassroom) {
+                    fetch(
+                        `/cmd/set_video/${encodeURIComponent(selectedClassroom.url)}`,
+                    )
+                        .then((response) => response.json())
+                        .then((setData) => {
+                            if (setData.success) {
+                                console.log(
+                                    "Video source set to selected classroom URL:",
+                                    setData,
+                                );
+                            } else {
+                                console.error(
+                                    "Error setting video source:",
+                                    setData.error,
+                                );
+                                alert(
+                                    "Failed to set video source: " +
+                                        setData.error,
+                                );
+                            }
+                        })
+                        .catch((err) => {
+                            console.error("Error setting video source:", err);
+                            alert("Failed to set video source.");
+                        });
+                } else {
+                    selectedClassroom = null;
+                }
+            });
+
+            startExam.addEventListener("click", () => {
+                const subj = subject.value.trim();
+                const dur = parseInt(duration.value);
+                if (!subj || !dur || !selectedClassroom) {
+                    alert("Please fill in all fields and select a classroom.");
+                    return;
+                }
+                fetch("/exam/start", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        subject: subj,
+                        duration: dur,
+                        classroom_id: selectedClassroom.id,
+                    }),
+                })
+                    .then((response) => response.json())
+                    .then((data) => {
+                        if (data.success) {
+                            alert("Exam started successfully.");
+                            stream.src = "/stream?t=" + Date.now(); // Refresh MJPEG stream
+                            fetchStatus();
+                        } else {
+                            console.error("Error starting exam:", data.error);
+                            alert("Failed to start exam: " + data.error);
+                        }
+                    })
+                    .catch((err) => {
+                        console.error("Error starting exam:", err);
+                        alert("Failed to start exam.");
+                    });
+            });
+
+            stopExam.addEventListener("click", () => {
+                fetch("/exam/stop")
+                    .then((response) => response.json())
+                    .then((data) => {
+                        if (data.success) {
+                            alert("Exam stopped successfully.");
+                            fetchStatus();
+                        } else {
+                            console.error("Error stopping exam:", data.error);
+                            alert("Failed to stop exam: " + data.error);
+                        }
+                    })
+                    .catch((err) => {
+                        console.error("Error stopping exam:", err);
+                        alert("Failed to stop exam.");
+                    });
+            });
+
+            resetAnomalies.addEventListener("click", () => {
+                fetch("/exam/anomalies/reset", { method: "POST" })
+                    .then((response) => response.json())
+                    .then((data) => {
+                        if (data.success) {
+                            fetchAnomalies();
+                        } else {
+                            console.error(
+                                "Error resetting anomalies:",
+                                data.error,
+                            );
+                            alert("Failed to reset anomalies: " + data.error);
+                        }
+                    })
+                    .catch((err) => {
+                        console.error("Error resetting anomalies:", err);
+                        alert("Failed to reset anomalies.");
+                    });
+            });
+
+            recalibrate.addEventListener("click", () => {
+                fetch("/exam/recalibrate", {
+                    method: "POST",
+                })
+                    .then((response) => response.json())
+                    .then((data) => {
+                        if (data.success) {
+                            alert("Recalibration started.");
+                        } else {
+                            console.error("Error recalibrating:", data.error);
+                            alert("Failed to recalibrate: " + data.error);
+                        }
+                    })
+                    .catch((err) => {
+                        console.error("Error recalibrating:", err);
+                        alert("Failed to recalibrate.");
+                    });
+            });
+
+            // Function to fetch and display anomalies
+            function fetchAnomalies() {
+                fetch("/exam/anomalies")
+                    .then((response) => response.json())
+                    .then((data) => {
+                        if (data.success) {
+                            const tbody =
+                                document.getElementById("anomalyBody");
+                            tbody.innerHTML = "";
+                            data.anomalies.forEach((item) => {
+                                const row = document.createElement("tr");
+                                row.innerHTML = `<td>${item.id}</td><td>${item.coord}</td><td>${item.count}</td>`;
+                                tbody.appendChild(row);
+                            });
+                        } else {
+                            console.error(
+                                "Error fetching anomalies:",
+                                data.error,
+                            );
+                        }
+                    })
+                    .catch((err) =>
+                        console.error("Error fetching anomalies:", err),
+                    );
+            }
+        </script>
+    </body>
+</html>

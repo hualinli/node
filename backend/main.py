@@ -152,6 +152,11 @@ static_dir = os.path.join(config.get_path("FRONTEND_PATH"), "static")
 if os.path.exists(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
+# 挂载异常快照目录
+snapshots_dir = "snapshots"
+if os.path.exists(snapshots_dir):
+    app.mount("/snapshots", StaticFiles(directory=snapshots_dir), name="snapshots")
+
 @app.get("/")
 async def index():
     index_path = os.path.join(config.get_path("FRONTEND_PATH"), "index.html")
@@ -159,7 +164,7 @@ async def index():
         return FileResponse(index_path)
     return JSONResponse(status_code=404, content={"success": False, "error": f"Index file not found at {index_path}"})
 
-
+# For test ---- BEGIN
 @app.get("/status")
 def get_status():
     """获取引擎运行状态和实时 FPS"""
@@ -195,7 +200,7 @@ def control(action: str):
 def set_video(video_path: str):
     engine.set_video_source(video_path)
     return {"success": True, "video_path": video_path}
-
+# For test ---- END
 
 
 
@@ -233,6 +238,10 @@ def stop_exam():
 @app.get("/exam/status")
 def get_exam_status():
     try:
+        remaining_seconds = 0
+        if exam_manager.exam_running and exam_manager.start_time:
+            elapsed = max(0, time.time() - exam_manager.start_time)
+            remaining_seconds = max(0, exam_manager.duration - elapsed)
         return {
             "success": True,
             "exam_running": exam_manager.exam_running,
@@ -240,7 +249,8 @@ def get_exam_status():
             "duration": exam_manager.duration,
             "classroom_id": exam_manager.classroom_id,
             "start_time": exam_manager.start_time,
-            "student_count": exam_manager.get_student_count()
+            "student_count": exam_manager.get_student_count(),
+            "remaining_seconds": int(remaining_seconds)
         }
     except Exception as e:
         return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
@@ -274,6 +284,41 @@ def reset_anomalies():
         return {"success": True}
     except Exception as e:
         return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
+
+@app.get("/exam/anomalies/images")
+def get_anomaly_images(count: int = 10):
+    from urllib.parse import quote
+    if not exam_manager.exam_running or not exam_manager.current_snapshot_dir:
+        exam_id = exam_manager.exam_id or exam_manager.local_exam_id
+        return {"success": True, "images": [], "exam_id": exam_id}
+    try:
+        if not os.path.exists(exam_manager.current_snapshot_dir):
+            exam_id = exam_manager.exam_id or exam_manager.local_exam_id
+            return {"success": True, "images": [], "exam_id": exam_id}
+        files = [f for f in os.listdir(exam_manager.current_snapshot_dir) if f.endswith('.jpg')]
+        files.sort(key=lambda x: os.path.getmtime(os.path.join(exam_manager.current_snapshot_dir, x)), reverse=True)
+        images = []
+        exam_id = exam_manager.exam_id or exam_manager.local_exam_id
+        # 使用本地考试标识符作为目录名，确保 URL 能正确访问到静态资源
+        dir_encoded = quote(str(exam_manager.local_exam_id))
+        for f in files[:count]:
+            parts = f.split('_')
+            if len(parts) >= 6:
+                try:
+                    # 修正索引：0:snapshot, 1:seatXX, 2:xXXX, 3:yYYY, 4:clsZ, 5:timestamp
+                    seat_x = int(parts[2][1:])
+                    seat_y = int(parts[3][1:])
+                    images.append({
+                        "filename": f,
+                        "url": f"/snapshots/{dir_encoded}/{f}",
+                        "x": seat_x,
+                        "y": seat_y
+                    })
+                except ValueError:
+                    continue
+        return {"success": True, "images": images, "exam_id": exam_id}
+    except Exception as e:
+        return {"success": False, "error": str(e)}
 
 
 

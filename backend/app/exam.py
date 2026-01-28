@@ -21,6 +21,7 @@ class ExamManager:
         self.cancel_event = threading.Event()  # 用于取消计时器的线程事件
         self.exam_running = False  # 考试是否正在运行
         self.exam_id: Optional[int] = None  # 考试ID (由控制中心分配)
+        self.local_exam_id: Optional[str] = None  # 本地考试标识符
         self.subject: Optional[str] = None  # 考试科目
         self.duration: Optional[int] = None  # 考试时长（秒）
         self.classroom_id: Optional[int] = None  # 教室ID
@@ -95,7 +96,9 @@ class ExamManager:
 
             # 记录考试详情
             self.exam_running = True
-            self.exam_id = None
+            self.start_time = time.time()
+            # 默认给一个临时ID，防止上报时因为还没拿回正式ID而报错
+            self.exam_id = int(self.start_time)
             self.subject = subject
             self.duration = duration_sec
             self.classroom_id = classroom_id
@@ -107,8 +110,8 @@ class ExamManager:
             self.frame_counter = 0  # 重置帧计数器
 
             # 创建考试特定的截图目录
-            exam_id = f"{self.subject}_{self.classroom_id}_{int(self.start_time)}"
-            self.current_snapshot_dir = f"snapshots/{exam_id}"
+            self.local_exam_id = f"{self.subject}_{self.classroom_id}_{int(self.start_time)}"
+            self.current_snapshot_dir = f"snapshots/{self.local_exam_id}"
             os.makedirs(self.current_snapshot_dir, exist_ok=True)
 
             # 重置取消事件
@@ -178,11 +181,12 @@ class ExamManager:
 
             # 归档当前考试的截图
             if self.current_snapshot_dir and os.path.exists(self.current_snapshot_dir):
-                archive_dir = f"archives/{os.path.basename(self.current_snapshot_dir)}"
+                archive_dir = f"archives/{self.local_exam_id}"
                 os.makedirs("archives", exist_ok=True)
                 os.rename(self.current_snapshot_dir, archive_dir)
                 print(f"[Archive] Moved snapshots to {archive_dir}")
             self.current_snapshot_dir = None
+            self.local_exam_id = None
 
             if self.timer_thread and self.timer_thread.is_alive():
                 self.timer_thread = None  # 让它自然死亡

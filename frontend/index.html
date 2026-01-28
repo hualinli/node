@@ -1,320 +1,234 @@
-node/frontend/index.html
-<!doctype html>
-<html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>Exam Control</title>
-        <style>
-            body {
-                font-family: Arial, sans-serif;
-                text-align: center;
-                padding: 20px;
-            }
-            img {
-                max-width: 100%;
-                height: auto;
-                border: 1px solid #ccc;
-            }
-            input,
-            button {
-                margin: 10px;
-                padding: 10px;
-            }
-            button:disabled {
-                background-color: #ccc;
-                cursor: not-allowed;
-            }
-            table {
-                margin: 20px auto;
-                border-collapse: collapse;
-                width: 80%;
-            }
-            th,
-            td {
-                border: 1px solid #ddd;
-                padding: 8px;
-                text-align: center;
-            }
-            th {
-                background-color: #f2f2f2;
-            }
-        </style>
-    </head>
-    <body>
-        <h1>Exam Control</h1>
-        <img id="stream" src="/stream" alt="MJPEG Stream" />
-        <br />
-        <select id="classroomSelect">
-            <option value="">Select a classroom...</option>
-        </select>
-        <br />
-        <input type="text" id="subject" placeholder="Subject" required />
-        <input
-            type="number"
-            id="duration"
-            placeholder="Duration (minutes)"
-            required
-        />
-        <br />
-        <button id="startExam">Start Exam</button>
-        <button id="stopExam">Stop Exam</button>
-        <button id="resetAnomalies">Reset Anomaly Counts</button>
-        <button id="recalibrate">Recalibrate</button>
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>智能感知监控系统</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <header>
+        <div class="header-left">
+            <div id="clock">00:00:00</div>
 
-        <h2>Anomaly Report</h2>
-        <table id="anomalyTable">
-            <thead>
-                <tr>
-                    <th>Id</th>
-                    <th>Coordinate</th>
-                    <th>Anomaly Count</th>
-                </tr>
-            </thead>
-            <tbody id="anomalyBody"></tbody>
-        </table>
+            <div class="control-group" style="margin-left: 15px;">
+                <label class="control-label">考试科目</label>
+                <input type="text" id="subject-input" class="glass-input" placeholder="输入考试科目全称" style="width: 120px;">
+            </div>
 
-        <script>
-            const stream = document.getElementById("stream");
-            const classroomSelect = document.getElementById("classroomSelect");
-            const subject = document.getElementById("subject");
-            const duration = document.getElementById("duration");
-            const startExam = document.getElementById("startExam");
-            const stopExam = document.getElementById("stopExam");
-            const resetAnomalies = document.getElementById("resetAnomalies");
-            const recalibrate = document.getElementById("recalibrate");
+            <div class="control-group" style="margin-left: 15px;">
+                <label class="control-label">考试时长</label>
+                <select id="exam-duration" class="glass-btn">
+		    <option value="1">1分钟</option>
+		    <option value="30">0.5小时</option>
+                    <option value="60">1小时</option>
+		    <option value="90">1.5小时</option>
+                    <option value="120" selected>2小时</option>
+		    <option value="150">2.5小时</option>
+                    <option value="180">3小时</option>
+                </select>
+            </div>
 
-            // Function to update button states and UI based on exam status
-            function updateButtons(data) {
-                startExam.disabled = data.exam_running;
-                stopExam.disabled = !data.exam_running;
-                recalibrate.disabled = !data.exam_running;
-                if (data.exam_running) {
-                    subject.value = data.subject || "";
-                    duration.value = data.duration
-                        ? Math.ceil(data.duration / 60)
-                        : "";
-                    if (data.classroom_id) {
-                        classroomSelect.value = data.classroom_id;
-                        // Find and set selectedClassroom
-                        const options = classroomSelect.options;
-                        for (let i = 0; i < options.length; i++) {
-                            if (options[i].value == data.classroom_id) {
-                                selectedClassroom = options[i].classroom;
-                                break;
-                            }
-                        }
-                    }
-                }
-                // Do not clear fields when no exam is running, to allow user input
-            }
 
-            // Fetch exam status and update UI
-            function fetchStatus() {
-                fetch("/exam/status")
-                    .then((response) => response.json())
-                    .then((data) => {
-                        if (data.success) {
-                            updateButtons(data);
-                        } else {
-                            console.error(
-                                "Error fetching exam status:",
-                                data.error,
-                            );
-                        }
-                    })
-                    .catch((err) =>
-                        console.error("Error fetching exam status:", err),
-                    );
-            }
 
-            // Initial fetch on load
-            fetchStatus();
-            fetchClassrooms();
-            fetchAnomalies();
+            <div class="control-group" style="margin-left: 15px;">
+                <label class="control-label">教室:</label>
+		<!-- 原来的 select 标签被删除了，替换为下面的结构 -->
+                <div class="custom-select-container" style="position: relative; width: 110px;">
+                    <!-- 1. 隐藏的输入框：保留原有ID，确保 connectStream 等逻辑能读到值 -->
+                    <input type="hidden" id="classroom-select" value="">
 
-            // Poll status every 1 second
-            setInterval(fetchStatus, 1000);
-            setInterval(fetchAnomalies, 1000);
+                    <!-- 2. 显示框：点击这里弹出下拉菜单 -->
+                    <div id="classroom-trigger" class="glass-btn" onclick="toggleDropdown(event)" style="justify-content: space-between; padding-right: 8px;">
+                        <span id="classroom-text">选择教室</span>
+                        <span style="font-size: 10px; opacity: 0.7;">▼</span>
+                    </div>
 
-            let selectedClassroom = null;
+                    <!-- 3. 下拉菜单本体：包含分组和选项 -->
+                    <div id="classroom-dropdown" class="custom-dropdown-menu">
+                        <!-- JS 会在这里动态填充数据 -->
+                    </div>
+                </div>
+            </div>
+        </div>
 
-            // Function to fetch classrooms and populate select
-            function fetchClassrooms() {
-                fetch("/classrooms")
-                    .then((response) => response.json())
-                    .then((data) => {
-                        if (data.success && data.classrooms.length > 0) {
-                            data.classrooms.forEach((classroom) => {
-                                const option = document.createElement("option");
-                                option.value = classroom.id;
-                                option.textContent = `${classroom.building} ${classroom.name}`;
-                                option.classroom = classroom; // Store classroom object
-                                classroomSelect.appendChild(option);
-                            });
-                        } else {
-                            console.error(
-                                "No classrooms found or error fetching classrooms:",
-                                data,
-                            );
-                        }
-                    })
-                    .catch((err) => {
-                        console.error("Error fetching classrooms:", err);
-                    });
-            }
+        <div class="header-center">
+            <h1>智能感知监控系统</h1>
+        </div>
 
-            // Event listener for classroom selection
-            classroomSelect.addEventListener("change", () => {
-                const selectedOption =
-                    classroomSelect.options[classroomSelect.selectedIndex];
-                selectedClassroom = selectedOption.classroom;
-                if (selectedClassroom) {
-                    fetch(
-                        `/cmd/set_video/${encodeURIComponent(selectedClassroom.url)}`,
-                    )
-                        .then((response) => response.json())
-                        .then((setData) => {
-                            if (setData.success) {
-                                console.log(
-                                    "Video source set to selected classroom URL:",
-                                    setData,
-                                );
-                            } else {
-                                console.error(
-                                    "Error setting video source:",
-                                    setData.error,
-                                );
-                                alert(
-                                    "Failed to set video source: " +
-                                        setData.error,
-                                );
-                            }
-                        })
-                        .catch((err) => {
-                            console.error("Error setting video source:", err);
-                            alert("Failed to set video source.");
-                        });
-                } else {
-                    selectedClassroom = null;
-                }
-            });
+        <div class="header-right">
+            <div class="control-group" style="margin-right: 15px;">
+                <button id="btn-start" class="glass-btn btn-connect" onclick="startExam()" title="开始考试并启动倒计时">
+                    <span style="margin-right:5px">▶</span> 开始
+                </button>
+                <button id="btn-disconnect" class="glass-btn btn-disconnect" onclick="disconnectStream()" title="结束考试（⚠: 当倒计时结束时也会自动结束考试）">
+                    <span style="margin-right:5px">⏹</span> 断开
+                </button>
+            </div>
+            <button id="btn-reset-tracks" class="glass-btn" onclick="calibrate()" style="margin-left:10px;" title="清除当前目标锁定，重新进行人员定位与标定" disabled>
+                🔄 重置追踪
+            </button>
+            <button id="btn-reset-stats" class="glass-btn" onclick="resetStats()" title="清空热力图数据，重新进行异常统计" disabled>
+                📊 重置统计
+            </button>
 
-            startExam.addEventListener("click", () => {
-                const subj = subject.value.trim();
-                const dur = parseInt(duration.value);
-                if (!subj || !dur || !selectedClassroom) {
-                    alert("Please fill in all fields and select a classroom.");
-                    return;
-                }
-                fetch("/exam/start", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({
-                        subject: subj,
-                        duration: dur,
-                        classroom_id: selectedClassroom.id,
-                    }),
-                })
-                    .then((response) => response.json())
-                    .then((data) => {
-                        if (data.success) {
-                            alert("Exam started successfully.");
-                            stream.src = "/stream?t=" + Date.now(); // Refresh MJPEG stream
-                            fetchStatus();
-                        } else {
-                            console.error("Error starting exam:", data.error);
-                            alert("Failed to start exam: " + data.error);
-                        }
-                    })
-                    .catch((err) => {
-                        console.error("Error starting exam:", err);
-                        alert("Failed to start exam.");
-                    });
-            });
+            <label class="control-label" style="margin-left:10px;">异常公示:</label>
+            <select id="img-count-select" class="glass-btn" style="appearance:none; padding-right:25px;">
+                <option value="0">关闭</option>
+                <option value="10">10条</option>
+                <option value="20">20条</option>
+                <option value="50" selected>50条</option>
+                <option value="100">100条</option>
+            </select>
 
-            stopExam.addEventListener("click", () => {
-                fetch("/exam/stop")
-                    .then((response) => response.json())
-                    .then((data) => {
-                        if (data.success) {
-                            alert("Exam stopped successfully.");
-                            fetchStatus();
-                        } else {
-                            console.error("Error stopping exam:", data.error);
-                            alert("Failed to stop exam: " + data.error);
-                        }
-                    })
-                    .catch((err) => {
-                        console.error("Error stopping exam:", err);
-                        alert("Failed to stop exam.");
-                    });
-            });
+            <button class="glass-btn" onclick="toggleGlobalFullscreen()" style="margin-left:10px;" title="全屏">⛶ 全屏</button>
+        </div>
+    </header>
 
-            resetAnomalies.addEventListener("click", () => {
-                fetch("/exam/anomalies/reset", { method: "POST" })
-                    .then((response) => response.json())
-                    .then((data) => {
-                        if (data.success) {
-                            fetchAnomalies();
-                        } else {
-                            console.error(
-                                "Error resetting anomalies:",
-                                data.error,
-                            );
-                            alert("Failed to reset anomalies: " + data.error);
-                        }
-                    })
-                    .catch((err) => {
-                        console.error("Error resetting anomalies:", err);
-                        alert("Failed to reset anomalies.");
-                    });
-            });
+    <div id="main-container">
+        <div id="timer-hud">
+            <div id="timer-display">02:00:00</div>
+            <div id="timer-label">REMAINING TIME</div>
+        </div>
 
-            recalibrate.addEventListener("click", () => {
-                fetch("/exam/recalibrate", {
-                    method: "POST",
-                })
-                    .then((response) => response.json())
-                    .then((data) => {
-                        if (data.success) {
-                            alert("Recalibration started.");
-                        } else {
-                            console.error("Error recalibrating:", data.error);
-                            alert("Failed to recalibrate: " + data.error);
-                        }
-                    })
-                    .catch((err) => {
-                        console.error("Error recalibrating:", err);
-                        alert("Failed to recalibrate.");
-                    });
-            });
+        <!-- 左侧: 实时视频 -->
+        <div class="monitor-card" id="card-left">
+            <div class="card-header">
+                <div style="display:flex; align-items:center;">
+                    <span class="dot green"></span>
+                    <span class="card-title">实时视频分析</span>
+                </div>
+                <button class="glass-btn" style="padding:2px 8px; font-size:12px; border:none;" onclick="toggleLocalFullscreen('card-left')">⛶</button>
+            </div>
+            <div class="canvas-container">
+                <img id="video-feed" src="" alt="Video Feed">
+                <div id="video-overlay" class="overlay">
+                    <span>未连接视频源</span>
+                </div>
+                <div id="stream-status" class="status-disconnected">未连接</div>
+                <!-- 十字号标记 -->
+                <div class="video-overlay">
+                    <div class="focus-marker"></div>
+                </div>
+            </div>
+        </div>
 
-            // Function to fetch and display anomalies
-            function fetchAnomalies() {
-                fetch("/exam/anomalies")
-                    .then((response) => response.json())
-                    .then((data) => {
-                        if (data.success) {
-                            const tbody =
-                                document.getElementById("anomalyBody");
-                            tbody.innerHTML = "";
-                            data.anomalies.forEach((item) => {
-                                const row = document.createElement("tr");
-                                row.innerHTML = `<td>${item.id}</td><td>${item.coord}</td><td>${item.count}</td>`;
-                                tbody.appendChild(row);
-                            });
-                        } else {
-                            console.error(
-                                "Error fetching anomalies:",
-                                data.error,
-                            );
-                        }
-                    })
-                    .catch((err) =>
-                        console.error("Error fetching anomalies:", err),
-                    );
-            }
-        </script>
-    </body>
+        <!-- 右侧: 热力图 -->
+        <div class="monitor-card" id="card-right">
+            <div class="card-header">
+                <div style="display:flex; align-items:center;">
+                    <span class="dot red"></span>
+                    <span class="card-title">异常热力分布</span>
+                </div>
+                <button class="glass-btn" style="padding:2px 8px; font-size:12px; border:none;" onclick="toggleLocalFullscreen('card-right')">⛶</button>
+            </div>
+            <div class="canvas-container">
+                <div class="heatmap-legend">
+                    <div class="legend-bar"></div>
+                    <div class="legend-labels">
+                        <span>高</span>
+                        <span>↑</span>
+                        <span>低</span>
+                    </div>
+                </div>
+                <!-- 十字号标记 -->
+                <div class="video-overlay">
+                    <div class="focus-marker"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    <!-- ... 上面是 main-container ... -->
+    </div> <!-- 结束 main-container -->
+
+    <!-- ▼▼▼▼▼▼▼▼▼▼▼▼▼ [新增] 滚动字幕区域 ▼▼▼▼▼▼▼▼▼▼▼▼▼ -->
+    <div id="system-notice-bar">
+        <div class="notice-content">
+            <span class="notice-icon">📢</span>
+            欢迎使用哈工大智慧监考系统！哈尔滨工业大学考务中心提醒您：严肃考纪，诚信应考，共创公平竞争环境!
+        </div>
+    </div>
+    <!-- ▲▲▲▲▲▲▲▲▲▲▲▲▲ [新增结束] ▲▲▲▲▲▲▲▲▲▲▲▲▲ -->
+
+
+    <!-- 底部异常记录展示区 -->
+    <div id="carousel-section">
+        <div id="resize-handle"></div>
+        <div class="carousel-label-wrapper">
+            <div class="carousel-label">
+                <span style="color:var(--accent);">⚠</span> 异常记录公示栏
+            </div>
+        </div>
+        <div id="carousel-scroll-container">
+            <div id="marquee-track" class="marquee-track"></div>
+        </div>
+    </div>
+
+    <div id="lightbox" onclick="closeLightbox()">
+        <img id="lightbox-img" src="" alt="">
+        <div style="margin-top:15px; color:#cbd5e1; font-size:14px; letter-spacing:1px;">点击任意处关闭</div>
+    </div>
+
+    <!-- 隐藏的配置和统计面板（保留API功能） -->
+    <div id="hidden-panels">
+        <!-- 这些接口保留用于未来扩展 -->
+    </div>
+
+
+    <!-- ================= 新增：确认弹窗组件 ================= -->
+
+    <!-- 1. 开始考试确认弹窗 -->
+    <div id="modal-start-confirm" class="modal-overlay hidden">
+        <div class="modal-box">
+            <h3 class="modal-title">🏁 考试信息确认</h3>
+            <div class="modal-content">
+                <p>请核对以下考试信息：</p>
+                <div class="info-row">
+                    <span class="info-label">考试科目（全称）：</span>
+                    <span id="confirm-subject" class="info-value highlight">--</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">考试时长：</span>
+                    <span id="confirm-duration" class="info-value highlight">--</span>
+                </div>
+                <div class="info-row">
+                    <span class="info-label">考试地点：</span>
+                    <span id="confirm-classroom" class="info-value">--</span>
+                </div>
+            </div>
+            <div class="modal-actions">
+                <button class="glass-btn btn-cancel" onclick="closeModal('modal-start-confirm')">取消</button>
+                <button class="glass-btn btn-confirm" onclick="confirmStartExam()">确定开始</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- 2. 结束考试确认弹窗 -->
+    <div id="modal-stop-confirm" class="modal-overlay hidden">
+        <div class="modal-box">
+            <h3 class="modal-title" style="color: var(--accent);">🛑 确认结束考试</h3>
+            <div class="modal-content">
+                <p>此操作将执行以下动作：</p>
+                <ul style="text-align: left; color: #cbd5e1; font-size: 14px; margin-bottom: 20px;">
+                    <li>断开视频连接！</li>
+                    <li>停止考试计时器！</li>
+                    <li>清空异常数据记录！</li>
+                </ul>
+                <p style="font-size: 16px; color: #F08080;">确定现在结束考试吗？</p>
+            </div>
+            <div class="modal-actions">
+                <button class="glass-btn btn-cancel" onclick="closeModal('modal-stop-confirm')">取消</button>
+                <button class="glass-btn btn-terminate" onclick="confirmDisconnect()">确定结束</button>
+            </div>
+        </div>
+    </div>
+
+
+
+
+    <script src="/static/js/heatmap.min.js"></script>
+    <script src="/static/js/main.js"></script>
+</body>
 </html>

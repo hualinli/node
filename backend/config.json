@@ -20,7 +20,7 @@
     "FRONTEND_PATH": "./frontend",
     "FPS_WINDOW_SIZE": 30,
     "JPEG_QUALITY": 30,
-    "JPEG_WIDTH": null,
+    "JPEG_WIDTH": 1280,
     "TRACK_MAX_FRAMES": 100,
     "TRACK_DELAY_SECONDS": 10,
     "anomaly_classes": [0, 1, 2],
