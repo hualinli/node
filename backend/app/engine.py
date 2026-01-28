@@ -26,6 +26,7 @@ class InferenceEngine:
         self.fps = 0.0
         self.frame_times = []
         self.is_inferring = False
+        self.last_error = None
 
         # 信号与队列
         self.inferring_event = threading.Event()  # 控制推理启停
@@ -50,6 +51,7 @@ class InferenceEngine:
     def set_video_source(self, video_path):
         with self.lock:
             self.current_video_path = video_path
+            self.last_error = None
         if self.video_event.is_set():
             self.video_event.clear()
             time.sleep(0.1)
@@ -75,7 +77,8 @@ class InferenceEngine:
 
             self.cap = cv2.VideoCapture(v_path)
             if not self.cap.isOpened():
-                print(f" [Error] 无法打开视频源: {v_path}")
+                self.last_error = f"无法打开视频源: {v_path}"
+                print(f" [Error] {self.last_error}")
                 self.video_event.clear()
                 continue
 
@@ -104,6 +107,7 @@ class InferenceEngine:
                             self.cap = cv2.VideoCapture(v_path)
                             if self.cap.isOpened():
                                 print(f" [VideoReader] 重连成功")
+                                self.last_error = None
                                 consecutive_failures = 0
                                 reconnected = True
                                 break
@@ -162,8 +166,10 @@ class InferenceEngine:
                 det_size = tuple(self.config.get("DET_SIZE"))
                 det_buffer = np.empty((1, det_size[1], det_size[0], 3), dtype=np.uint8)
                 self.is_inferring = True
+                self.last_error = None
             except Exception as e:
-                print(f" [Error] 模型加载失败: {e}")
+                self.last_error = f"模型加载失败: {e}"
+                print(f" [Error] {self.last_error}")
                 self.inferring_event.clear()
                 continue
 

@@ -13,6 +13,7 @@ import uvicorn
 from app.config import Config
 from app.engine import InferenceEngine
 from app.exam import ExamManager
+from app.heartbeat import HeartbeatManager
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -28,6 +29,9 @@ engine = InferenceEngine(config)
 
 # 初始化考试管理器
 exam_manager = ExamManager(engine)
+
+# 初始化心跳管理器
+heartbeat_manager = HeartbeatManager(config, engine)
 
 # 设置引擎的考试管理器引用
 engine.exam_manager = exam_manager
@@ -67,10 +71,13 @@ async def lifespan(app: FastAPI):
     for t in threads:
         t.start()
 
+    heartbeat_manager.start()
+
     yield
 
     # 确保关停所有服务
     print(" [System] 正在执行销毁流程...")
+    heartbeat_manager.stop()
     engine.exit_event.set()
     # 如果考试仍在运行，停止考试并取消计时器
     if exam_manager.exam_running:

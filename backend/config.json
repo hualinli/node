@@ -27,5 +27,9 @@
     "anomaly_match_threshold": 50,
     "snapshot_classes": [0, 1],
     "snapshot_threshold_frames": 12,
-    "snapshot_cooldown_frames": 720
+    "snapshot_cooldown_frames": 720,
+
+    "CONTROL_CENTER_URL": "http://localhost:8080",
+    "NODE_TOKEN": "default-node-token",
+    "HEARTBEAT_INTERVAL": 10
 }
