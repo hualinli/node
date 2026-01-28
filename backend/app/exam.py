@@ -6,6 +6,7 @@ from typing import Optional
 import numpy as np
 from .tracker import Tracker
 import os
+import requests
 class ExamManager:
     """考试管理器"""
 
@@ -360,8 +361,57 @@ class ExamManager:
             filename = f"{self.current_snapshot_dir}/snapshot_seat{seat_id}_x{seat_x}_y{seat_y}_cls{cls_id}_{int(timestamp)}.jpg"
             cv2.imwrite(filename, frame)
             print(f"[Snapshot] Saved anomaly snapshot: {filename}")
+
+            # 发送异常上报到控制中心
+            self._send_alert_to_center(seat_id, cls_id, seat_x, seat_y, filename)
         else:
             print("[Snapshot] No current snapshot directory, skipping save")
+
+    def _send_alert_to_center(self, seat_id, cls_id, x, y, image_path):
+        """发送异常上报到控制中心"""
+        if not self.exam_id or not self.classroom_id:
+            print("[Alert] Missing exam_id or classroom_id, skipping alert")
+            return
+
+        # 映射异常类型
+        anomaly_type_map = {
+            0: "head_abnormal",
+            1: "limb_abnormal",
+            2: "sleeping",
+            3: "standing",
+            4: "normal"
+        }
+        alert_type = anomaly_type_map.get(cls_id, "unknown")
+
+        base_url = self.engine.config.get("CONTROL_CENTER_URL", "http://localhost:8080")
+        token = self.engine.config.get("NODE_TOKEN", "default-node-token")
+        url = f"{base_url.rstrip('/')}/node-api/v1/alerts"
+        headers = {
+            "X-Node-Token": token
+        }
+
+        try:
+            with open(image_path, 'rb') as f:
+                files = {'image': f}
+                data = {
+                    'room_id': self.classroom_id,
+                    'exam_id': self.exam_id,
+                    'type': alert_type,
+                    'seat_number': str(seat_id),
+                    'x': x,
+                    'y': y
+                }
+                response = requests.post(url, headers=headers, data=data, files=files, timeout=10)
+                if response.status_code == 200:
+                    res_data = response.json()
+                    if res_data.get("success"):
+                        print(f"[Alert] Successfully sent alert for seat {seat_id}, type {alert_type}")
+                    else:
+                        print(f"[Alert] Alert failed: {res_data}")
+                else:
+                    print(f"[Alert] HTTP error {response.status_code}: {response.text}")
+        except Exception as e:
+            print(f"[Alert] Failed to send alert: {e}")
 
     def _auto_stop_timer(self):
         """自动停止计时器，在考试时长结束后停止考试"""
