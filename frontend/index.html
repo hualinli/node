@@ -60,6 +60,7 @@ node/frontend/index.html
         <button id="startExam">Start Exam</button>
         <button id="stopExam">Stop Exam</button>
         <button id="resetAnomalies">Reset Anomaly Counts</button>
+        <button id="recalibrate">Recalibrate</button>
 
         <h2>Anomaly Report</h2>
         <table id="anomalyTable">
@@ -81,11 +82,13 @@ node/frontend/index.html
             const startExam = document.getElementById("startExam");
             const stopExam = document.getElementById("stopExam");
             const resetAnomalies = document.getElementById("resetAnomalies");
+            const recalibrate = document.getElementById("recalibrate");
 
             // Function to update button states and UI based on exam status
             function updateButtons(data) {
                 startExam.disabled = data.exam_running;
                 stopExam.disabled = !data.exam_running;
+                recalibrate.disabled = !data.exam_running;
                 if (data.exam_running) {
                     subject.value = data.subject || "";
                     duration.value = data.duration
@@ -265,6 +268,25 @@ node/frontend/index.html
                     .catch((err) => {
                         console.error("Error resetting anomalies:", err);
                         alert("Failed to reset anomalies.");
+                    });
+            });
+
+            recalibrate.addEventListener("click", () => {
+                fetch("/exam/recalibrate", {
+                    method: "POST",
+                })
+                    .then((response) => response.json())
+                    .then((data) => {
+                        if (data.success) {
+                            alert("Recalibration started.");
+                        } else {
+                            console.error("Error recalibrating:", data.error);
+                            alert("Failed to recalibrate: " + data.error);
+                        }
+                    })
+                    .catch((err) => {
+                        console.error("Error recalibrating:", err);
+                        alert("Failed to recalibrate.");
                     });
             });
 

@@ -36,6 +36,55 @@ heartbeat_manager = HeartbeatManager(config, engine)
 # 设置引擎的考试管理器引用
 engine.exam_manager = exam_manager
 
+def handle_exam_start():
+    """考试开始时同步到控制中心"""
+    if exam_manager.exam_running:
+        # 格式化开始时间为 ISO 格式
+        start_time_iso = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(exam_manager.start_time))
+        payload = {
+            "action": "start",
+            "room_id": exam_manager.classroom_id,
+            "subject": exam_manager.subject,
+            "start_time": start_time_iso,
+            "duration_minutes": int(exam_manager.duration / 60)
+        }
+        res = heartbeat_manager.sync_task(payload)
+        if res and res.get("success"):
+            assigned_id = res.get("exam_id")
+            if assigned_id is not None:
+                exam_manager.exam_id = assigned_id
+                print(f"[Sync] Exam started, ID assigned: {exam_manager.exam_id}")
+
+def handle_exam_stop():
+    """考试结束时同步到控制中心"""
+    if exam_manager.exam_id:
+        payload = {
+            "action": "stop",
+            "exam_id": exam_manager.exam_id
+        }
+        heartbeat_manager.sync_task(payload)
+        print(f"[Sync] Exam stopped, ID: {exam_manager.exam_id}")
+
+def handle_exam_sync():
+    """考试状态或人数同步到控制中心"""
+    if not exam_manager.exam_running or exam_manager.exam_id is None:
+        return False
+
+    payload = {
+        "action": "sync",
+        "exam_id": exam_manager.exam_id,
+        "examinee_count": exam_manager.get_student_count()
+    }
+    res = heartbeat_manager.sync_task(payload)
+    if res.get("success"):
+        print(f"[Sync] Exam count synced: {payload['examinee_count']}")
+        return True
+    return False
+
+exam_manager.start_callback = handle_exam_start
+exam_manager.stop_callback = handle_exam_stop
+exam_manager.sync_callback = handle_exam_sync
+
 
 
 @asynccontextmanager
@@ -150,13 +199,15 @@ def set_video(video_path: str):
 
 
 
-
-
-
-
-
-
 #考试管理部分
+@app.post("/exam/recalibrate")
+def recalibrate_exam():
+    try:
+        exam_manager.recalibrate()
+        return {"success": True}
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
+
 @app.post("/exam/start")
 async def start_exam(request: Request):
     try:

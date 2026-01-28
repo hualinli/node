@@ -19,13 +19,17 @@ class ExamManager:
         self.lock = threading.RLock()  # 添加锁来保护共享状态，允许重入
         self.cancel_event = threading.Event()  # 用于取消计时器的线程事件
         self.exam_running = False  # 考试是否正在运行
+        self.exam_id: Optional[int] = None  # 考试ID (由控制中心分配)
         self.subject: Optional[str] = None  # 考试科目
         self.duration: Optional[int] = None  # 考试时长（秒）
         self.classroom_id: Optional[int] = None  # 教室ID
         self.start_time: Optional[float] = None  # 考试开始时间
         self.timer_thread: Optional[threading.Thread] = None  # 自动停止计时器线程
         self.track_timer: Optional[threading.Timer] = None  # 跟踪启动定时器
-        self.student_count = 0  # 考生数
+        self.student_count = 0  # 考生数 (实际检测到的)
+        self.start_callback = None  # 开始考试回调
+        self.stop_callback = None  # 停止考试回调
+        self.sync_callback = None  # 状态同步回调
         self.anomaly_counts = {}  # 异常情况计数 {seat_id: count}
         self.anomaly_snapshots = {}  # 异常截图跟踪 {seat_id: {cls_id: {'count': int, 'last_time': float}}}
         self.snapshot_cooldown = {}  # 截图冷却 { (seat_id, cls_id): last_snapshot_frame }
@@ -90,6 +94,7 @@ class ExamManager:
 
             # 记录考试详情
             self.exam_running = True
+            self.exam_id = None
             self.subject = subject
             self.duration = duration_sec
             self.classroom_id = classroom_id
@@ -115,6 +120,13 @@ class ExamManager:
             # 启动跟踪定时器
             self.track_timer = threading.Timer(self.engine.config.get("TRACK_DELAY_SECONDS"), self._start_tracking)
             self.track_timer.start()
+
+        # 触发开始考试回调 (锁外执行)
+        if self.start_callback:
+            try:
+                self.start_callback()
+            except Exception as e:
+                print(f"[ExamManager] Start callback error: {e}")
 
     def stop_exam(self):
         """停止考试
@@ -142,8 +154,17 @@ class ExamManager:
             self.engine.final_centers = None
             self.engine.tracker = Tracker()  # 重置跟踪器
 
+        # 触发停止考试回调 (在重置状态前，且在锁外执行)
+        if self.stop_callback:
+            try:
+                self.stop_callback()
+            except Exception as e:
+                print(f"[ExamManager] Stop callback error: {e}")
+
+        with self.lock:
             # 重置考试状态
             self.exam_running = False
+            self.exam_id = None
             self.subject = None
             self.duration = None
             self.classroom_id = None
@@ -169,11 +190,42 @@ class ExamManager:
         """启动跟踪"""
         with self.lock:
             if self.exam_running:
+                # 重新标定时重置异常计数
+                self.reset_anomaly_counts()
                 self.engine.tracker = Tracker()  # 重置跟踪器
                 self.engine.final_centers = None
                 self.engine.frame_count = 0
                 self.engine.tracking_event.set()
                 print(f"[Tracker] Started tracking for {self.engine.max_frames} frames")
+                # 启动一个后台线程等待跟踪结束并同步
+                threading.Thread(target=self._wait_for_tracking_and_sync, daemon=True).start()
+
+    def recalibrate(self):
+        """重新标定"""
+        with self.lock:
+            if not self.exam_running:
+                raise Exception("No exam is currently running")
+
+            # 如果已有定时器在运行，取消它
+            if self.track_timer and self.track_timer.is_alive():
+                self.track_timer.cancel()
+
+            # 立即开始标定
+            self._start_tracking()
+
+    def _wait_for_tracking_and_sync(self):
+        """等待跟踪完成并触发同步"""
+        # 确保已经开始跟踪
+        time.sleep(1)
+        # 等待 tracking_event 被引擎清除（表示跟踪完成）
+        while self.exam_running and self.engine.tracking_event.is_set():
+            time.sleep(1)
+
+        if self.exam_running and self.sync_callback:
+            try:
+                self.sync_callback()
+            except Exception as e:
+                print(f"[ExamManager] Sync callback error: {e}")
 
     def get_student_count(self):
         """获取考生数，根据标定结果的中心点个数"""

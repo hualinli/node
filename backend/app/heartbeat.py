@@ -22,6 +22,32 @@ class HeartbeatManager:
 
         self.logger = logging.getLogger("Heartbeat")
 
+    def sync_task(self, payload: dict):
+        """
+        同步考试状态到控制中心
+        URL: /node-api/v1/tasks/sync
+        """
+        url = f"{self.base_url.rstrip('/')}/node-api/v1/tasks/sync"
+        headers = {
+            "X-Node-Token": self.token,
+            "Content-Type": "application/json"
+        }
+        try:
+            response = requests.post(
+                url,
+                json=payload,
+                headers=headers,
+                timeout=5
+            )
+            if response.status_code == 200:
+                return response.json()
+            else:
+                self.logger.error(f"Task sync failed with status code: {response.status_code}")
+                return {"success": False, "error": f"HTTP {response.status_code}"}
+        except Exception as e:
+            self.logger.error(f"Task sync request failed: {e}")
+            return {"success": False, "error": str(e)}
+
     def start(self):
         """启动心跳线程"""
         if self.thread and self.thread.is_alive():
