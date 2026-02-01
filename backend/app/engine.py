@@ -304,15 +304,15 @@ class InferenceEngine:
                 color = tuple(class_colors[cls_id]) if cls_id < len(class_colors) else (0, 255, 0)
                 cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), color, 2)
                 label = class_names[cls_id] if cls_id < len(class_names) else "Unknown"
-                cv2.putText(
-                    frame,
-                    label,
-                    (box[0], max(box[1] - 10, 20)),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    color,
-                    2,
-                )
+                # cv2.putText(
+                #     frame,
+                #     label,
+                #     (box[0], max(box[1] - 10, 20)),
+                #     cv2.FONT_HERSHEY_SIMPLEX,
+                #     0.6,
+                #     color,
+                #     2,
+                # )
 
             if anomaly_map:
                 anomalies = list(anomaly_map.values())
@@ -344,15 +344,15 @@ class InferenceEngine:
                     self.frame_times[-1] - self.frame_times[0]
                 )
 
-            cv2.putText(
-                frame,
-                f"Real-time FPS: {self.fps:.2f}",
-                (30, 40),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1,
-                (0, 0, 255),
-                2,
-            )
+            # cv2.putText(
+            #     frame,
+            #     f"Real-time FPS: {self.fps:.2f}",
+            #     (30, 40),
+            #     cv2.FONT_HERSHEY_SIMPLEX,
+            #     1,
+            #     (0, 0, 255),
+            #     2,
+            # )
 
             # 3. 核心优化：预先压缩 JPEG 并缓存，所有客户端共享这一个压缩结果
             jpeg_quality = self.config.get("JPEG_QUALITY")

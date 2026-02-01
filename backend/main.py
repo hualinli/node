@@ -14,7 +14,7 @@ from app.config import Config
 from app.engine import InferenceEngine
 from app.exam import ExamManager
 from app.heartbeat import HeartbeatManager
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from mindx.sdk import base
@@ -146,6 +146,30 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    """
+    统一鉴权中间件
+    """
+    path = request.url.path
+
+    # 静态资源放行，确保样式和脚本能加载
+    if path.startswith("/static") or path.startswith("/snapshots"):
+        return await call_next(request)
+
+    # 鉴权逻辑：从 Query Param 获取 token
+    expected_token = config.get("NODE_TOKEN", "default-node-token")
+    provided_token = request.query_params.get("token")
+
+    if provided_token != expected_token:
+        return JSONResponse(
+            status_code=401,
+            content={"success": False, "error": "Unauthorized: Invalid or missing token"}
+        )
+
+    response = await call_next(request)
+    return response
 
 # 挂载静态资源
 static_dir = os.path.join(config.get_path("FRONTEND_PATH"), "static")
