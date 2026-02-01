@@ -11,6 +11,8 @@ let localRemainingSeconds = 0;
 let classroomList = [];
 let wasRunning = false;
 let anomalyPoints = [];
+let originalVideoWidth = 0;
+let originalVideoHeight = 0;
 
 // ================= 初始化 =================
 document.addEventListener("DOMContentLoaded", () => {
@@ -18,6 +20,18 @@ document.addEventListener("DOMContentLoaded", () => {
     initTimer();
     initUIListeners();
     bootstrap();
+
+    // 监听窗口大小变化，实时更新坐标展示
+    window.addEventListener("resize", () => {
+        if (isRunning) {
+            updateHeatmap();
+            const imgCountSelect = document.getElementById("img-count-select");
+            const count = imgCountSelect ? parseInt(imgCountSelect.value) : 0;
+            if (count > 0) {
+                loadAnomalyImages(count);
+            }
+        }
+    });
 });
 
 function bootstrap() {
@@ -206,6 +220,12 @@ function startStatusPolling() {
                 }
             }
             wasRunning = isRunning;
+
+            // 同步视频原始分辨率
+            if (status.video_width && status.video_height) {
+                originalVideoWidth = status.video_width;
+                originalVideoHeight = status.video_height;
+            }
 
             // 同步考试倒计时：只在误差超过5秒时同步，避免频繁更新导致不流畅
             if (status.exam_running) {
@@ -592,16 +612,35 @@ async function updateHeatmap() {
         const data = await resp.json();
         if (!data.success) return;
 
-        const scaleX = container.clientWidth / videoFeed.naturalWidth;
-        const scaleY = container.clientHeight / videoFeed.naturalHeight;
+        // 优先使用后端返回的原始分辨率，若无则回退到当前图片分辨率
+        const nw = originalVideoWidth || videoFeed.naturalWidth;
+        const nh = originalVideoHeight || videoFeed.naturalHeight;
+        const cw = container.clientWidth;
+        const ch = container.clientHeight;
+        const videoRatio = nw / nh;
+        const containerRatio = cw / ch;
+
+        let dw, dh, offsetX, offsetY;
+        if (containerRatio > videoRatio) {
+            dh = ch;
+            dw = ch * videoRatio;
+            offsetX = (cw - dw) / 2;
+            offsetY = 0;
+        } else {
+            dw = cw;
+            dh = cw / videoRatio;
+            offsetX = 0;
+            offsetY = (ch - dh) / 2;
+        }
+        const scale = dw / nw;
 
         const points = data.anomalies
             .filter((item) => item.count > 0)
             .map((item) => {
                 const coords = item.coord.replace(/[()]/g, "").split(",");
                 return {
-                    x: Math.round(parseFloat(coords[0]) * scaleX),
-                    y: Math.round(parseFloat(coords[1]) * scaleY),
+                    x: Math.round(parseFloat(coords[0]) * scale + offsetX),
+                    y: Math.round(parseFloat(coords[1]) * scale + offsetY),
                     value: item.count,
                     // 频数越高，半径越大，使其更容易连成一片
                     radius: Math.min(100, 30 + Math.log2(item.count + 1) * 15),
@@ -610,7 +649,7 @@ async function updateHeatmap() {
 
         // 设置 heatmap 数据。每个档位频数加 50，20个档位即 max 值为 1000
         heatmapInstance.setData({
-            max: 1000,
+            max: 3000,
             data: points,
         });
     } catch (e) {
@@ -669,23 +708,36 @@ function updateCarousel(images) {
         // 鼠标悬停时在画面上标出十字光标
         wrapper.onmouseenter = () => {
             const videoFeed = document.getElementById("video-feed");
-            const heatmapCanvas = document.getElementById("heatmap-canvas");
-
             if (videoFeed && videoFeed.naturalWidth > 0) {
-                const scaleX = videoFeed.clientWidth / videoFeed.naturalWidth;
-                const scaleY = videoFeed.clientHeight / videoFeed.naturalHeight;
-
                 const markers = document.querySelectorAll(".focus-marker");
                 markers.forEach((marker) => {
                     const container = marker.closest(".canvas-container");
                     if (container) {
-                        const targetScaleX =
-                            container.clientWidth / videoFeed.naturalWidth;
-                        const targetScaleY =
-                            container.clientHeight / videoFeed.naturalHeight;
+                        const nw = originalVideoWidth || videoFeed.naturalWidth;
+                        const nh =
+                            originalVideoHeight || videoFeed.naturalHeight;
+                        const cw = container.clientWidth;
+                        const ch = container.clientHeight;
+                        const videoRatio = nw / nh;
+                        const containerRatio = cw / ch;
+
+                        let dw, dh, offsetX, offsetY;
+                        if (containerRatio > videoRatio) {
+                            dh = ch;
+                            dw = ch * videoRatio;
+                            offsetX = (cw - dw) / 2;
+                            offsetY = 0;
+                        } else {
+                            dw = cw;
+                            dh = cw / videoRatio;
+                            offsetX = 0;
+                            offsetY = (ch - dh) / 2;
+                        }
+                        const scale = dw / nw;
+
                         marker.style.display = "block";
-                        marker.style.left = img.x * targetScaleX + "px";
-                        marker.style.top = img.y * targetScaleY + "px";
+                        marker.style.left = img.x * scale + offsetX + "px";
+                        marker.style.top = img.y * scale + offsetY + "px";
                     }
                 });
             }
@@ -732,15 +784,39 @@ window.closeLightbox = () => {
 function updatePoints(images) {
     anomalyPoints = images.map((img) => ({ x: img.x, y: img.y }));
     const overlay = document.getElementById("video-overlay");
-    if (!overlay) return;
+    const videoFeed = document.getElementById("video-feed");
+    if (!overlay || !videoFeed || videoFeed.naturalWidth === 0) return;
+
     // 清空旧点
     overlay.querySelectorAll(".anomaly-point").forEach((e) => e.remove());
+
+    const nw = originalVideoWidth || videoFeed.naturalWidth;
+    const nh = originalVideoHeight || videoFeed.naturalHeight;
+    const cw = overlay.clientWidth;
+    const ch = overlay.clientHeight;
+    const videoRatio = nw / nh;
+    const containerRatio = cw / ch;
+
+    let dw, dh, offsetX, offsetY;
+    if (containerRatio > videoRatio) {
+        dh = ch;
+        dw = ch * videoRatio;
+        offsetX = (cw - dw) / 2;
+        offsetY = 0;
+    } else {
+        dw = cw;
+        dh = cw / videoRatio;
+        offsetX = 0;
+        offsetY = (ch - dh) / 2;
+    }
+    const scale = dw / nw;
+
     // 添加新点
     anomalyPoints.forEach((p) => {
         const div = document.createElement("div");
         div.className = "anomaly-point";
-        div.style.left = p.x + "px";
-        div.style.top = p.y + "px";
+        div.style.left = p.x * scale + offsetX + "px";
+        div.style.top = p.y * scale + offsetY + "px";
         overlay.appendChild(div);
     });
 }

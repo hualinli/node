@@ -26,7 +26,7 @@
     "anomaly_classes": [0, 1, 2],
     "anomaly_match_threshold": 50,
     "snapshot_classes": [0, 1],
-    "snapshot_threshold_frames": 12,
+    "snapshot_threshold_frames": 24,
     "snapshot_cooldown_frames": 720,
 
     "CONTROL_CENTER_URL": "http://192.168.1.182:8080",

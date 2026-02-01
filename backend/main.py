@@ -274,7 +274,9 @@ def get_exam_status():
             "classroom_id": exam_manager.classroom_id,
             "start_time": exam_manager.start_time,
             "student_count": exam_manager.get_student_count(),
-            "remaining_seconds": int(remaining_seconds)
+            "remaining_seconds": int(remaining_seconds),
+            "video_width": engine.original_width,
+            "video_height": engine.original_height
         }
     except Exception as e:
         return JSONResponse(status_code=500, content={"success": False, "error": str(e)})

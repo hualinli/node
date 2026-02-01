@@ -21,6 +21,8 @@ class InferenceEngine:
         self.latest_jpeg = None  # 共享的 JPEG 缓存
         self.frame_id = 0  # 当前帧ID
         self.latest_frame_id = 0  # 消费者看到的最新帧ID
+        self.original_width = 0
+        self.original_height = 0
 
         # 状态统计
         self.fps = 0.0
@@ -180,6 +182,8 @@ class InferenceEngine:
                     continue
 
                 h, w = frame.shape[:2]
+                self.original_width = w
+                self.original_height = h
                 det_in = cv2.resize(frame, det_size)
                 det_buffer[0] = det_in
                 det_raw = det_model.infer(det_buffer)[0]
