@@ -1,7 +1,6 @@
 import threading
 import time
 import requests
-import json
 import logging
 
 class HeartbeatManager:
@@ -20,7 +19,7 @@ class HeartbeatManager:
         self.token = self.config.get("NODE_TOKEN", "default-node-token")
         self.interval = self.config.get("HEARTBEAT_INTERVAL", 10)
 
-        self.logger = logging.getLogger("Heartbeat")
+        self.logger = logging.getLogger(__name__)
 
     def sync_task(self, payload: dict):
         """
@@ -45,7 +44,7 @@ class HeartbeatManager:
                 self.logger.error(f"Task sync failed with status code: {response.status_code}")
                 return {"success": False, "error": f"HTTP {response.status_code}"}
         except Exception as e:
-            self.logger.error(f"Task sync request failed: {e}")
+            self.logger.error("Task sync request failed: %s", e, exc_info=True)
             return {"success": False, "error": str(e)}
 
     def start(self):
@@ -135,9 +134,9 @@ class HeartbeatManager:
                     self.logger.error(f"Heartbeat failed with status code: {response.status_code}")
 
             except requests.exceptions.RequestException as e:
-                self.logger.error(f"Heartbeat request failed: {e}")
+                self.logger.error("Heartbeat request failed: %s", e, exc_info=True)
             except Exception as e:
-                self.logger.error(f"Unexpected error in heartbeat: {e}")
+                self.logger.error("Unexpected error in heartbeat: %s", e, exc_info=True)
 
             # 等待下一次上报，支持快速退出
             self.stop_event.wait(self.interval)

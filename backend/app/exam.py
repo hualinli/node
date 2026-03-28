@@ -1,5 +1,5 @@
 import json
-import math
+import logging
 import time
 import threading
 from typing import Optional
@@ -7,6 +7,8 @@ import numpy as np
 from .tracker import Tracker
 import os
 import requests
+
+
 class ExamManager:
     """考试管理器"""
 
@@ -37,6 +39,7 @@ class ExamManager:
         self.snapshot_cooldown = {}  # 截图冷却 { (seat_id, cls_id): last_snapshot_frame }
         self.frame_counter = 0  # 帧计数器，用于帧数冷却
         self.current_snapshot_dir = None  # 当前考试的截图目录
+        self.logger = logging.getLogger(__name__)
 
     def load_classrooms(self):
         """加载教室信息从classrooms.json"""
@@ -130,7 +133,7 @@ class ExamManager:
             try:
                 self.start_callback()
             except Exception as e:
-                print(f"[ExamManager] Start callback error: {e}")
+                self.logger.exception("Start callback error: %s", e)
 
     def stop_exam(self):
         """停止考试
@@ -163,7 +166,7 @@ class ExamManager:
             try:
                 self.stop_callback()
             except Exception as e:
-                print(f"[ExamManager] Stop callback error: {e}")
+                self.logger.exception("Stop callback error: %s", e)
 
         with self.lock:
             # 重置考试状态
@@ -184,7 +187,7 @@ class ExamManager:
                 archive_dir = f"archives/{self.local_exam_id}"
                 os.makedirs("archives", exist_ok=True)
                 os.rename(self.current_snapshot_dir, archive_dir)
-                print(f"[Archive] Moved snapshots to {archive_dir}")
+                self.logger.info("Moved snapshots to %s", archive_dir)
             self.current_snapshot_dir = None
             self.local_exam_id = None
 
@@ -201,7 +204,7 @@ class ExamManager:
                 self.engine.final_centers = None
                 self.engine.frame_count = 0
                 self.engine.tracking_event.set()
-                print(f"[Tracker] Started tracking for {self.engine.max_frames} frames")
+                self.logger.info("Started tracking for %s frames", self.engine.max_frames)
                 # 启动一个后台线程等待跟踪结束并同步
                 threading.Thread(target=self._wait_for_tracking_and_sync, daemon=True).start()
 
@@ -230,7 +233,7 @@ class ExamManager:
             try:
                 self.sync_callback()
             except Exception as e:
-                print(f"[ExamManager] Sync callback error: {e}")
+                self.logger.exception("Sync callback error: %s", e)
 
     def get_student_count(self):
         """获取考生数，根据标定结果的中心点个数"""
@@ -364,28 +367,42 @@ class ExamManager:
         if self.current_snapshot_dir:
             filename = f"{self.current_snapshot_dir}/snapshot_seat{seat_id}_x{seat_x}_y{seat_y}_cls{cls_id}_{int(timestamp)}.jpg"
             cv2.imwrite(filename, frame)
-            print(f"[Snapshot] Saved anomaly snapshot: {filename}")
+            self.logger.info("Saved anomaly snapshot: %s", filename)
 
             # 发送异常上报到控制中心
             self._send_alert_to_center(seat_id, cls_id, seat_x, seat_y, filename)
         else:
-            print("[Snapshot] No current snapshot directory, skipping save")
+            self.logger.warning("No current snapshot directory, skipping save")
+
+    def _normalize_alert_type(self, cls_id):
+        class_names = self.engine.config.get("class_names", [])
+        if 0 <= cls_id < len(class_names):
+            raw_name = str(class_names[cls_id])
+            normalized = "_".join(raw_name.strip().lower().split())
+            if normalized:
+                return normalized
+        return "unknown"
 
     def _send_alert_to_center(self, seat_id, cls_id, x, y, image_path):
         """发送异常上报到控制中心"""
         if not self.exam_id or not self.classroom_id:
-            print("[Alert] Missing exam_id or classroom_id, skipping alert")
+            self.logger.warning(
+                "Skip alert: missing exam_id or classroom_id, seat_id=%s cls_id=%s",
+                seat_id,
+                cls_id,
+            )
             return
 
-        # 映射异常类型
-        anomaly_type_map = {
-            0: "head_abnormal",
-            1: "limb_abnormal",
-            2: "sleeping",
-            3: "standing",
-            4: "normal"
-        }
-        alert_type = anomaly_type_map.get(cls_id, "unknown")
+        snapshot_classes = self.engine.config.get("snapshot_classes", [0, 1, 2, 3])
+        if cls_id not in snapshot_classes:
+            self.logger.debug(
+                "Skip alert: cls_id not in snapshot_classes, cls_id=%s snapshot_classes=%s",
+                cls_id,
+                snapshot_classes,
+            )
+            return
+
+        alert_type = self._normalize_alert_type(cls_id)
 
         base_url = self.engine.config.get("CONTROL_CENTER_URL", "http://localhost:8080")
         token = self.engine.config.get("NODE_TOKEN", "default-node-token")
@@ -409,13 +426,47 @@ class ExamManager:
                 if response.status_code == 200:
                     res_data = response.json()
                     if res_data.get("success"):
-                        print(f"[Alert] Successfully sent alert for seat {seat_id}, type {alert_type}")
+                        self.logger.info(
+                            "Alert sent successfully: exam_id=%s room_id=%s seat_id=%s cls_id=%s type=%s",
+                            self.exam_id,
+                            self.classroom_id,
+                            seat_id,
+                            cls_id,
+                            alert_type,
+                        )
                     else:
-                        print(f"[Alert] Alert failed: {res_data}")
+                        self.logger.error(
+                            "Alert response success=false: exam_id=%s room_id=%s seat_id=%s cls_id=%s type=%s response=%s",
+                            self.exam_id,
+                            self.classroom_id,
+                            seat_id,
+                            cls_id,
+                            alert_type,
+                            res_data,
+                        )
                 else:
-                    print(f"[Alert] HTTP error {response.status_code}: {response.text}")
+                    self.logger.error(
+                        "Alert HTTP error: status=%s exam_id=%s room_id=%s seat_id=%s cls_id=%s type=%s body=%s",
+                        response.status_code,
+                        self.exam_id,
+                        self.classroom_id,
+                        seat_id,
+                        cls_id,
+                        alert_type,
+                        response.text,
+                    )
         except Exception as e:
-            print(f"[Alert] Failed to send alert: {e}")
+            self.logger.exception(
+                "Failed to send alert: exam_id=%s room_id=%s seat_id=%s cls_id=%s type=%s image_path=%s url=%s error=%s",
+                self.exam_id,
+                self.classroom_id,
+                seat_id,
+                cls_id,
+                alert_type,
+                image_path,
+                url,
+                e,
+            )
 
     def _auto_stop_timer(self):
         """自动停止计时器，在考试时长结束后停止考试"""
@@ -430,4 +481,4 @@ class ExamManager:
                     try:
                         self.stop_exam()
                     except Exception as e:
-                        print(f"[Timer] Error stopping exam: {e}")
+                        self.logger.exception("Timer failed to stop exam: %s", e)

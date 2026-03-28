@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import signal
 import threading
@@ -14,6 +15,7 @@ from app.config import Config
 from app.engine import InferenceEngine
 from app.exam import ExamManager
 from app.heartbeat import HeartbeatManager
+from app.logging_setup import setup_logging
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
@@ -23,6 +25,13 @@ from mindx.sdk import base
 
 # 初始化配置
 config = Config("./backend/config.json")
+setup_logging(
+    log_dir=config.get("LOG_DIR", "backend/logs"),
+    max_lines=config.get("LOG_MAX_LINES", 100000),
+    max_files=config.get("LOG_MAX_FILES", 5),
+    level=config.get("LOG_LEVEL", "INFO"),
+)
+logger = logging.getLogger(__name__)
 
 # 初始化推理引擎
 engine = InferenceEngine(config)
@@ -53,7 +62,7 @@ def handle_exam_start():
             assigned_id = res.get("exam_id")
             if assigned_id is not None:
                 exam_manager.exam_id = assigned_id
-                print(f"[Sync] Exam started, ID assigned: {exam_manager.exam_id}")
+                logger.info("Exam started, assigned exam_id=%s", exam_manager.exam_id)
 
 def handle_exam_stop():
     """考试结束时同步到控制中心"""
@@ -63,7 +72,7 @@ def handle_exam_stop():
             "exam_id": exam_manager.exam_id
         }
         heartbeat_manager.sync_task(payload)
-        print(f"[Sync] Exam stopped, ID: {exam_manager.exam_id}")
+        logger.info("Exam stopped, exam_id=%s", exam_manager.exam_id)
 
 def handle_exam_sync():
     """考试状态或人数同步到控制中心"""
@@ -77,7 +86,7 @@ def handle_exam_sync():
     }
     res = heartbeat_manager.sync_task(payload)
     if res.get("success"):
-        print(f"[Sync] Exam count synced: {payload['examinee_count']}")
+        logger.info("Exam count synced: %s", payload["examinee_count"])
         return True
     return False
 
@@ -109,7 +118,7 @@ async def lifespan(app: FastAPI):
 
     inject_signal_handler()
 
-    print(" [System] 初始化 MindX 全局资源...")
+    logger.info("Initializing MindX global resources")
     base.mx_init()
 
     threads = [
@@ -125,7 +134,7 @@ async def lifespan(app: FastAPI):
     yield
 
     # 确保关停所有服务
-    print(" [System] 正在执行销毁流程...")
+    logger.info("Starting shutdown sequence")
     heartbeat_manager.stop()
     engine.exit_event.set()
     # 如果考试仍在运行，停止考试并取消计时器
@@ -138,11 +147,11 @@ async def lifespan(app: FastAPI):
     # 等待 0.8s，让后台线程安全退出对 NPU 资源的占用，避免 mx_deinit 崩溃
     await asyncio.sleep(0.8)
     try:
-        print(" [System] 正在销毁 MindX 资源...")
+        logger.info("Destroying MindX resources")
         base.mx_deinit()
     except Exception as e:
-        print(f" [Error] mx_deinit 异常: {e}")
-    print(" [System] 服务已安全停止。")
+        logger.exception("mx_deinit exception: %s", e)
+    logger.info("Service stopped safely")
 
 
 app = FastAPI(lifespan=lifespan)
@@ -393,8 +402,8 @@ def frame_generator():
 
             if data:
                 yield (b"--frame\r\nContent-Type: image/jpeg\r\n\r\n" + data + b"\r\n")
-    except Exception:
-        pass
+    except Exception as e:
+        logger.exception("frame_generator exception: %s", e)
 @app.get("/stream")
 def stream():
     return StreamingResponse(

@@ -1,8 +1,14 @@
-import subprocess, threading, time, shutil, os
+import logging
+import os
+import shutil
+import subprocess
+import threading
+import time
 
 class RTMPStreamer:
     def __init__(self, engine, rtmp_url="rtmp://localhost:1935/live/stream", fps=15, bitrate="500k"):
         self.engine = engine
+        self.logger = logging.getLogger(__name__)
         self.rtmp_url = rtmp_url
         self.fps = fps
         self.bitrate = bitrate
@@ -20,7 +26,7 @@ class RTMPStreamer:
         # 1. 检查环境变量（昇腾必备）
         ascend_home = os.environ.get("ASCEND_HOME") or os.environ.get("ASCEND_INSTALL_DIR")
         if not ascend_home:
-            print("⚠ ASCEND_HOME not set, h264_ascend may fail")
+            self.logger.warning("ASCEND_HOME not set, h264_ascend may fail")
 
         # 2. 仅检查编码器列表
         try:
@@ -31,7 +37,7 @@ class RTMPStreamer:
                 timeout=2
             )
             if "h264_ascend" in result.stdout:
-                print("✓ Detected h264_ascend encoder (Ascend DVPP)")
+                self.logger.info("Detected h264_ascend encoder (Ascend DVPP)")
                 # Ascend 编码器参数（根据 CANN 文档优化）
                 return "h264_ascend", [
                     "-device_id", "0",
@@ -43,10 +49,10 @@ class RTMPStreamer:
                     "-threads", "1",        # DVPP 单线程更稳定
                 ]
         except Exception as e:
-            print(f"⚠ Encoder detection warning: {e}")
+            self.logger.warning("Encoder detection warning: %s", e)
 
         # 3. 回退软编
-        print("✓ Falling back to libx264 (software encoding)")
+        self.logger.info("Falling back to libx264 (software encoding)")
         return "libx264", ["-preset", "ultrafast", "-tune", "zerolatency"]
 
     def start_stream(self):
@@ -77,7 +83,7 @@ class RTMPStreamer:
         if codec == "h264_ascend":
             cmd[1:1] = ["-hwaccel", "ascend", "-c:v", "mjpeg_ascend", "-device_id", "0", "-channel_id", "0"]
 
-        print(f"▶ Starting FFmpeg: {' '.join(cmd[:10])} ... {cmd[-1]}")
+        self.logger.info("Starting FFmpeg with encoder=%s target=%s", codec, cmd[-1])
 
         try:
             self.process = subprocess.Popen(
@@ -124,14 +130,14 @@ class RTMPStreamer:
                 last_push = time.time()
                 self.last_frame_id = frame_id
             except (BrokenPipeError, OSError) as e:
-                print(f"⚠ FFmpeg stdin broken: {e}")
+                self.logger.warning("FFmpeg stdin broken: %s", e)
                 break
 
         # 进程退出后尝试读取 stderr 诊断
         if self.process and self.process.poll() is not None:
             stderr = self.process.stderr.read().decode() if self.process.stderr else ""
             if "error" in stderr.lower() or "fail" in stderr.lower():
-                print(f"❌ FFmpeg error:\n{stderr[:500]}")  # 打印前500字符
+                self.logger.error("FFmpeg error: %s", stderr[:500])
 
     def stop_stream(self):
         if not self.running:
@@ -145,7 +151,8 @@ class RTMPStreamer:
             try:
                 self.process.stdin.close()
                 self.process.wait(timeout=3)
-            except:
+            except Exception as e:
+                self.logger.warning("FFmpeg graceful stop failed, killing process: %s", e)
                 self.process.kill()
                 self.process.wait(timeout=2)
 

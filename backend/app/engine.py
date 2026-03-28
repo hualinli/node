@@ -1,4 +1,5 @@
 import gc
+import logging
 import os
 import queue
 import threading
@@ -16,6 +17,7 @@ from .tracker import Tracker
 class InferenceEngine:
     def __init__(self, config):
         self.config = config
+        self.logger = logging.getLogger(__name__)
         self.lock = threading.Lock()
         self.condition = threading.Condition(self.lock)  # 用于通知新帧
         self.latest_jpeg = None  # 共享的 JPEG 缓存
@@ -66,7 +68,7 @@ class InferenceEngine:
             if not self.video_event.is_set():
                 # 停止时释放视频捕获对象
                 if self.cap and self.cap.isOpened():
-                    print(" [VideoReader] 正在释放视频源...")
+                    self.logger.info("VideoReader releasing video source")
                     self.cap.release()
                     self.cap = None
                 time.sleep(0.1)
@@ -75,12 +77,12 @@ class InferenceEngine:
             if not v_path:
                 time.sleep(0.1)
                 continue
-            print(f" [VideoReader] 使用视频源: {v_path}")
+            self.logger.info("VideoReader using source: %s", v_path)
 
             self.cap = cv2.VideoCapture(v_path)
             if not self.cap.isOpened():
                 self.last_error = f"无法打开视频源: {v_path}"
-                print(f" [Error] {self.last_error}")
+                self.logger.error(self.last_error)
                 self.video_event.clear()
                 continue
 
@@ -101,21 +103,24 @@ class InferenceEngine:
                 if not ret:
                     consecutive_failures += 1
                     if consecutive_failures > max_consecutive_failures:
-                        print(f" [Error] 连续 {max_consecutive_failures} 次读取失败，尝试重连...")
+                        self.logger.warning(
+                            "VideoReader consecutive failures reached %s, trying reconnect",
+                            max_consecutive_failures,
+                        )
                         # 尝试重连，最多 3 次，每次间隔 1 秒
                         reconnected = False
                         for attempt in range(3):
                             time.sleep(1)  # 等待 1 秒再重试
                             self.cap = cv2.VideoCapture(v_path)
                             if self.cap.isOpened():
-                                print(f" [VideoReader] 重连成功")
+                                self.logger.info("VideoReader reconnect success")
                                 self.last_error = None
                                 consecutive_failures = 0
                                 reconnected = True
                                 break
-                            print(f" [Error] 重连失败 (尝试 {attempt + 1}/3)")
+                            self.logger.warning("VideoReader reconnect failed attempt %s/3", attempt + 1)
                         if not reconnected:
-                            print(f" [Error] 重连最终失败")
+                            self.logger.error("VideoReader reconnect failed finally")
                             break
                     continue
                 else:
@@ -156,7 +161,7 @@ class InferenceEngine:
                 continue
 
             device_id = self.config.get("DEVICE_ID")
-            print(f" [NPU] 正在加载模型资源 (Device {device_id})...")
+            self.logger.info("Loading model resources on device %s", device_id)
             try:
                 det_model = MindXModel(self.config.get_path("DET_MODEL_PATH"), device_id)
                 cls_model = MindXModel(self.config.get_path("CLS_MODEL_PATH"), device_id)
@@ -171,7 +176,7 @@ class InferenceEngine:
                 self.last_error = None
             except Exception as e:
                 self.last_error = f"模型加载失败: {e}"
-                print(f" [Error] {self.last_error}")
+                self.logger.error(self.last_error)
                 self.inferring_event.clear()
                 continue
 
@@ -200,7 +205,7 @@ class InferenceEngine:
                         self.final_centers = self.tracker.get_final_centers()
                         self.tracking_event.clear()
                         self.frame_count = 0
-                        print(f" [Tracker] 跟踪完成，最终目标数: {len(self.final_centers)}")
+                        self.logger.info("Tracking finished, final target count: %s", len(self.final_centers))
                 # 跟踪器相关 END----
                 cls_ids = []
                 if len(boxes) > 0:
@@ -228,15 +233,15 @@ class InferenceEngine:
                     continue
 
             # 释放 NPU 资源
-            print(" [NPU] 正在释放模型资源...")
+            self.logger.info("Releasing model resources")
             try:
                 del det_model
                 del cls_model
-            except:
-                pass
+            except Exception as e:
+                self.logger.warning("Model resource cleanup warning: %s", e)
 
             self.is_inferring = False
-            print(" [NPU] 推理已停止")
+            self.logger.info("Inference stopped")
 
     def post_process_loop(self):
         """后处理线程"""
@@ -289,7 +294,8 @@ class InferenceEngine:
 
                 if matched_seat is not None:
                     if cls_id in anomaly_classes:
-                        self.exam_manager.anomaly_counts[matched_seat] = self.exam_manager.anomaly_counts.get(matched_seat, 0) + 1
+                        with self.exam_manager.lock:
+                            self.exam_manager.anomaly_counts[matched_seat] = self.exam_manager.anomaly_counts.get(matched_seat, 0) + 1
                     if cls_id in snapshot_classes:
                         if frame_for_snapshot is None:
                             frame_for_snapshot = raw_frame_for_snapshot if raw_frame_for_snapshot is not None else frame.copy()

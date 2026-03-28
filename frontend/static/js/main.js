@@ -551,7 +551,7 @@ async function loadAnomalyImages(count) {
         );
         if (!resp.ok) return;
         const data = await resp.json();
-        if (data.success) {
+        if (data.success && Array.isArray(data.images)) {
             updateCarousel(data.images);
             updatePoints(data.images);
         }
@@ -637,15 +637,21 @@ async function updateHeatmap() {
         const points = data.anomalies
             .filter((item) => item.count > 0)
             .map((item) => {
+                if (!item || typeof item.coord !== "string") return null;
                 const coords = item.coord.replace(/[()]/g, "").split(",");
+                if (coords.length < 2) return null;
+                const rawX = parseFloat(coords[0]);
+                const rawY = parseFloat(coords[1]);
+                if (Number.isNaN(rawX) || Number.isNaN(rawY)) return null;
                 return {
-                    x: Math.round(parseFloat(coords[0]) * scale + offsetX),
-                    y: Math.round(parseFloat(coords[1]) * scale + offsetY),
+                    x: Math.round(rawX * scale + offsetX),
+                    y: Math.round(rawY * scale + offsetY),
                     value: item.count,
                     // 频数越高，半径越大，使其更容易连成一片
                     radius: Math.min(100, 30 + Math.log2(item.count + 1) * 15),
                 };
-            });
+            })
+            .filter(Boolean);
 
         // 设置 heatmap 数据。每个档位频数加 50，20个档位即 max 值为 1000
         heatmapInstance.setData({

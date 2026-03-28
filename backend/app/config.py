@@ -2,13 +2,30 @@ import json
 import os
 from dotenv import load_dotenv
 
+
 class Config:
     def __init__(self, config_path="config.json"):
         load_dotenv()
-        self.BASE_DIR = os.getcwd()
-        if not os.path.isabs(config_path):
-            config_path = os.path.join(self.BASE_DIR, config_path)
-        with open(config_path) as f:
+        app_dir = os.path.dirname(os.path.abspath(__file__))
+        backend_dir = os.path.dirname(app_dir)
+        project_dir = os.path.dirname(backend_dir)
+
+        resolved_config_path = config_path
+        if not os.path.isabs(resolved_config_path):
+            cwd_candidate = os.path.abspath(os.path.join(os.getcwd(), resolved_config_path))
+            project_candidate = os.path.abspath(os.path.join(project_dir, resolved_config_path))
+            backend_candidate = os.path.abspath(os.path.join(backend_dir, resolved_config_path))
+            if os.path.exists(cwd_candidate):
+                resolved_config_path = cwd_candidate
+            elif os.path.exists(project_candidate):
+                resolved_config_path = project_candidate
+            else:
+                resolved_config_path = backend_candidate
+
+        self.config_path = os.path.abspath(resolved_config_path)
+        self.BASE_DIR = os.path.dirname(os.path.dirname(self.config_path))
+
+        with open(self.config_path, encoding="utf-8") as f:
             self._data = json.load(f)
 
     def get(self, key, default=None):
