@@ -17,6 +17,7 @@ class LineRotatingFileHandler(logging.Handler):
         self._file = None
         self._current_index = 0
         self._current_lines = 0
+        self._closed = False
 
         os.makedirs(self.log_dir, exist_ok=True)
         self._initialize_target_file()
@@ -65,6 +66,14 @@ class LineRotatingFileHandler(logging.Handler):
         try:
             msg = self.format(record)
             with self._lock:
+                # During interpreter/app shutdown, logging may still emit after close().
+                if self._closed:
+                    return
+
+                # Defensive reopen to avoid rare None races or external file closure.
+                if self._file is None:
+                    self._open_current_file(append=True)
+
                 if self._current_lines >= self.max_lines:
                     self._rotate()
                 self._file.write(msg + "\n")
@@ -75,6 +84,7 @@ class LineRotatingFileHandler(logging.Handler):
 
     def close(self):
         with self._lock:
+            self._closed = True
             if self._file:
                 try:
                     self._file.close()

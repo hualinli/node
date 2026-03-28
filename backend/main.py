@@ -186,9 +186,9 @@ if os.path.exists(static_dir):
     app.mount("/static", StaticFiles(directory=static_dir), name="static")
 
 # 挂载异常快照目录
-snapshots_dir = "snapshots"
-if os.path.exists(snapshots_dir):
-    app.mount("/snapshots", StaticFiles(directory=snapshots_dir), name="snapshots")
+snapshots_dir = config.get_path("SNAPSHOTS_DIR", "snapshots")
+os.makedirs(snapshots_dir, exist_ok=True)
+app.mount("/snapshots", StaticFiles(directory=snapshots_dir), name="snapshots")
 
 @app.get("/")
 async def index():

@@ -114,7 +114,8 @@ class ExamManager:
 
             # 创建考试特定的截图目录
             self.local_exam_id = f"{self.subject}_{self.classroom_id}_{int(self.start_time)}"
-            self.current_snapshot_dir = f"snapshots/{self.local_exam_id}"
+            snapshots_root = self.engine.config.get_path("SNAPSHOTS_DIR", "snapshots")
+            self.current_snapshot_dir = os.path.join(snapshots_root, self.local_exam_id)
             os.makedirs(self.current_snapshot_dir, exist_ok=True)
 
             # 重置取消事件
@@ -184,8 +185,9 @@ class ExamManager:
 
             # 归档当前考试的截图
             if self.current_snapshot_dir and os.path.exists(self.current_snapshot_dir):
-                archive_dir = f"archives/{self.local_exam_id}"
-                os.makedirs("archives", exist_ok=True)
+                archives_root = self.engine.config.get_path("ARCHIVES_DIR", "archives")
+                archive_dir = os.path.join(archives_root, self.local_exam_id)
+                os.makedirs(archives_root, exist_ok=True)
                 os.rename(self.current_snapshot_dir, archive_dir)
                 self.logger.info("Moved snapshots to %s", archive_dir)
             self.current_snapshot_dir = None
