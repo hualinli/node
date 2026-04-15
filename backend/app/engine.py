@@ -79,11 +79,42 @@ class InferenceEngine:
                 continue
             self.logger.info("VideoReader using source: %s", v_path)
 
-            self.cap = cv2.VideoCapture(v_path)
-            if not self.cap.isOpened():
+            open_retry_max = int(self.config.get("VIDEO_OPEN_RETRY_MAX", 3))
+            open_retry_interval = float(self.config.get("VIDEO_OPEN_RETRY_INTERVAL_SEC", 1))
+            self.cap = None
+            for attempt in range(1, open_retry_max + 1):
+                self.cap = cv2.VideoCapture(v_path)
+                if self.cap.isOpened():
+                    self.last_error = None
+                    break
+
+                self.logger.warning(
+                    "Video source open failed attempt %s/%s, source=%s",
+                    attempt,
+                    open_retry_max,
+                    v_path,
+                )
+                try:
+                    self.cap.release()
+                except Exception:
+                    pass
+                self.cap = None
+
+                if attempt < open_retry_max:
+                    time.sleep(open_retry_interval)
+
+            if not self.cap or not self.cap.isOpened():
                 self.last_error = f"无法打开视频源: {v_path}"
-                self.logger.error(self.last_error)
+                self.logger.error(
+                    "Video source open failed after max retries=%s, source=%s",
+                    open_retry_max,
+                    v_path,
+                )
                 self.video_event.clear()
+                self.inferring_event.clear()
+                # 回退到空闲状态后清空错误，避免心跳一直维持 error。
+                self.last_error = None
+                self.logger.info("Video source unavailable, fallback to idle state")
                 continue
 
             fps = self.cap.get(cv2.CAP_PROP_FPS)
@@ -92,7 +123,9 @@ class InferenceEngine:
             frame_interval = 1.0 / fps
 
             consecutive_failures = 0
-            max_consecutive_failures = 10  # 超时阈值：连续 10 次读取失败则尝试重连
+            max_consecutive_failures = int(self.config.get("VIDEO_READ_FAIL_MAX", 10))
+            reconnect_retry_max = int(self.config.get("VIDEO_RECONNECT_RETRY_MAX", 3))
+            reconnect_retry_interval = float(self.config.get("VIDEO_RECONNECT_RETRY_INTERVAL_SEC", 1))
             while (
                 self.cap.isOpened()
                 and self.video_event.is_set()
@@ -107,10 +140,10 @@ class InferenceEngine:
                             "VideoReader consecutive failures reached %s, trying reconnect",
                             max_consecutive_failures,
                         )
-                        # 尝试重连，最多 3 次，每次间隔 1 秒
+                        # 尝试重连，达到上限后才置 last_error
                         reconnected = False
-                        for attempt in range(3):
-                            time.sleep(1)  # 等待 1 秒再重试
+                        for attempt in range(reconnect_retry_max):
+                            time.sleep(reconnect_retry_interval)
                             self.cap = cv2.VideoCapture(v_path)
                             if self.cap.isOpened():
                                 self.logger.info("VideoReader reconnect success")
@@ -118,9 +151,23 @@ class InferenceEngine:
                                 consecutive_failures = 0
                                 reconnected = True
                                 break
-                            self.logger.warning("VideoReader reconnect failed attempt %s/3", attempt + 1)
+                            self.logger.warning(
+                                "VideoReader reconnect failed attempt %s/%s",
+                                attempt + 1,
+                                reconnect_retry_max,
+                            )
                         if not reconnected:
-                            self.logger.error("VideoReader reconnect failed finally")
+                            self.last_error = f"视频源重连失败: {v_path}"
+                            self.logger.error(
+                                "VideoReader reconnect failed after max retries=%s, source=%s",
+                                reconnect_retry_max,
+                                v_path,
+                            )
+                            self.video_event.clear()
+                            self.inferring_event.clear()
+                            # 回退到空闲状态后清空错误，避免心跳一直维持 error。
+                            self.last_error = None
+                            self.logger.info("Video reconnect exhausted, fallback to idle state")
                             break
                     continue
                 else:
@@ -162,20 +209,40 @@ class InferenceEngine:
 
             device_id = self.config.get("DEVICE_ID")
             self.logger.info("Loading model resources on device %s", device_id)
-            try:
-                det_model = MindXModel(self.config.get_path("DET_MODEL_PATH"), device_id)
-                cls_model = MindXModel(self.config.get_path("CLS_MODEL_PATH"), device_id)
-                cls_size = tuple(self.config.get("CLS_SIZE"))
-                cls_batch = self.config.get("CLS_BATCH")
-                cls_buffer = np.zeros(
-                    (cls_batch, cls_size[1], cls_size[0], 3), dtype=np.uint8
-                )
-                det_size = tuple(self.config.get("DET_SIZE"))
-                det_buffer = np.empty((1, det_size[1], det_size[0], 3), dtype=np.uint8)
-                self.is_inferring = True
-                self.last_error = None
-            except Exception as e:
-                self.last_error = f"模型加载失败: {e}"
+            model_retry_max = int(self.config.get("MODEL_LOAD_RETRY_MAX", 3))
+            model_retry_interval = float(self.config.get("MODEL_LOAD_RETRY_INTERVAL_SEC", 1))
+
+            load_ok = False
+            last_model_error = None
+            for attempt in range(1, model_retry_max + 1):
+                try:
+                    det_model = MindXModel(self.config.get_path("DET_MODEL_PATH"), device_id)
+                    cls_model = MindXModel(self.config.get_path("CLS_MODEL_PATH"), device_id)
+                    cls_size = tuple(self.config.get("CLS_SIZE"))
+                    cls_batch = self.config.get("CLS_BATCH")
+                    cls_buffer = np.zeros(
+                        (cls_batch, cls_size[1], cls_size[0], 3), dtype=np.uint8
+                    )
+                    det_size = tuple(self.config.get("DET_SIZE"))
+                    det_buffer = np.empty((1, det_size[1], det_size[0], 3), dtype=np.uint8)
+                    self.is_inferring = True
+                    self.last_error = None
+                    load_ok = True
+                    break
+                except Exception as e:
+                    last_model_error = e
+                    self.logger.warning(
+                        "Model load failed attempt %s/%s on device %s: %s",
+                        attempt,
+                        model_retry_max,
+                        device_id,
+                        e,
+                    )
+                    if attempt < model_retry_max:
+                        time.sleep(model_retry_interval)
+
+            if not load_ok:
+                self.last_error = f"模型加载失败(重试耗尽): {last_model_error}"
                 self.logger.error(self.last_error)
                 self.inferring_event.clear()
                 continue

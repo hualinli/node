@@ -19,19 +19,38 @@ from app.logging_setup import setup_logging
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
-from mindx.sdk import base
+
+
+# Bootstrap stderr logging early so import/startup failures are visible in systemd journal.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
+)
+bootstrap_logger = logging.getLogger("bootstrap")
+
+try:
+    from mindx.sdk import base
+except Exception:
+    bootstrap_logger.exception("Failed to import mindx.sdk.base during startup")
+    raise
 
 
 
 # 初始化配置
 config = Config("./backend/config.json")
 setup_logging(
-    log_dir=config.get("LOG_DIR", "backend/logs"),
+    log_dir=config.get_path("LOG_DIR", "backend/logs"),
     max_lines=config.get("LOG_MAX_LINES", 100000),
     max_files=config.get("LOG_MAX_FILES", 5),
     level=config.get("LOG_LEVEL", "INFO"),
 )
 logger = logging.getLogger(__name__)
+logger.info(
+    "Startup context cwd=%s config=%s log_dir=%s",
+    os.getcwd(),
+    config.config_path,
+    config.get_path("LOG_DIR", "backend/logs"),
+)
 
 # 初始化推理引擎
 engine = InferenceEngine(config)

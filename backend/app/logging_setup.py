@@ -110,17 +110,21 @@ def setup_logging(log_dir="backend/logs", max_lines=100000, max_files=5, level="
     console_handler.setLevel(log_level)
     console_handler.setFormatter(formatter)
 
-    file_handler = LineRotatingFileHandler(
-        log_dir=log_dir,
-        base_name="app",
-        max_lines=max_lines,
-        max_files=max_files,
-    )
-    file_handler.setLevel(log_level)
-    file_handler.setFormatter(formatter)
-
     root.handlers.clear()
     root.addHandler(console_handler)
-    root.addHandler(file_handler)
+
+    try:
+        file_handler = LineRotatingFileHandler(
+            log_dir=log_dir,
+            base_name="app",
+            max_lines=max_lines,
+            max_files=max_files,
+        )
+        file_handler.setLevel(log_level)
+        file_handler.setFormatter(formatter)
+        root.addHandler(file_handler)
+    except Exception as e:
+        root.error("File logging disabled, cannot initialize log dir '%s': %s", log_dir, e, exc_info=True)
+
     root._line_logging_initialized = True
     return root
