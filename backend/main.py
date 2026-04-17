@@ -66,6 +66,10 @@ engine.exam_manager = exam_manager
 
 def handle_exam_start():
     """考试开始时同步到控制中心"""
+    if getattr(exam_manager, "skip_start_sync", False):
+        logger.info("Skip start sync because exam is started by schedule API")
+        return
+
     if exam_manager.exam_running:
         # 格式化开始时间为 ISO 格式
         start_time_iso = time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime(exam_manager.start_time))
@@ -265,6 +269,155 @@ def recalibrate_exam():
     except Exception as e:
         return JSONResponse(status_code=500, content={"success": False, "error": str(e)})
 
+@app.post("/exam/schedule_start")
+async def schedule_start_exam(request: Request):
+    """由调度器触发开始考试，支持 exam_id 幂等调用。"""
+    def _clip_error(msg: str, limit: int = 1024) -> str:
+        if not msg:
+            return "Unknown error"
+        if len(msg) <= limit:
+            return msg
+        return msg[: limit - 3] + "..."
+
+    request_id = request.headers.get("X-Request-ID", "")
+    source_ip = request.headers.get("X-Forwarded-For")
+    if not source_ip and request.client:
+        source_ip = request.client.host
+
+    try:
+        data = await request.json()
+    except Exception as e:
+        logger.warning(
+            "schedule_start invalid json request_id=%s source_ip=%s error=%s",
+            request_id,
+            source_ip,
+            e,
+        )
+        return JSONResponse(
+            status_code=400,
+            content={"success": False, "error": "Invalid JSON body"},
+        )
+
+    subject = data.get("subject")
+    duration = data.get("duration")
+    classroom_id = data.get("classroom_id")
+    exam_id = data.get("exam_id")
+
+    missing_fields = []
+    if subject is None or str(subject).strip() == "":
+        missing_fields.append("subject")
+    if duration is None or str(duration).strip() == "":
+        missing_fields.append("duration")
+    if classroom_id is None or str(classroom_id).strip() == "":
+        missing_fields.append("classroom_id")
+    if exam_id is None or str(exam_id).strip() == "":
+        missing_fields.append("exam_id")
+    if missing_fields:
+        return JSONResponse(
+            status_code=400,
+            content={
+                "success": False,
+                "error": f"Missing required fields: {', '.join(missing_fields)}",
+            },
+        )
+
+    try:
+        duration_minutes = int(duration)
+        classroom_id = int(classroom_id)
+        exam_id = int(exam_id)
+    except (TypeError, ValueError):
+        return JSONResponse(
+            status_code=400,
+            content={
+                "success": False,
+                "error": "duration, classroom_id and exam_id must be integers",
+            },
+        )
+
+    if duration_minutes <= 0:
+        return JSONResponse(
+            status_code=400,
+            content={"success": False, "error": "duration must be > 0"},
+        )
+
+    subject = str(subject).strip()
+
+    # 幂等与冲突检查：同 exam_id 且参数一致视为成功；其他运行中状态视为冲突。
+    with exam_manager.lock:
+        if exam_manager.exam_running:
+            if exam_manager.exam_id == exam_id:
+                current_duration_minutes = int((exam_manager.duration or 0) / 60)
+                same_payload = (
+                    exam_manager.subject == subject
+                    and exam_manager.classroom_id == classroom_id
+                    and current_duration_minutes == duration_minutes
+                )
+                if same_payload:
+                    logger.info(
+                        "schedule_start idempotent success exam_id=%s request_id=%s source_ip=%s",
+                        exam_id,
+                        request_id,
+                        source_ip,
+                    )
+                    return {"success": True}
+                return JSONResponse(
+                    status_code=409,
+                    content={
+                        "success": False,
+                        "error": _clip_error(
+                            "exam_id is already running with different subject/classroom_id/duration"
+                        ),
+                    },
+                )
+
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "success": False,
+                    "error": _clip_error(
+                        f"Node is busy with another exam_id={exam_manager.exam_id}"
+                    ),
+                },
+            )
+
+    try:
+        # 远程调度开考：跳过本地 start 回调中的“再次向中心申请开考”流程。
+        exam_manager.skip_start_sync = True
+        exam_manager.start_exam(subject, duration_minutes, classroom_id)
+        # 覆盖为调度中心下发的全局 exam_id，供告警和同步链路使用。
+        exam_manager.exam_id = exam_id
+        logger.info(
+            "schedule_start success exam_id=%s subject=%s classroom_id=%s duration_minutes=%s request_id=%s source_ip=%s",
+            exam_id,
+            subject,
+            classroom_id,
+            duration_minutes,
+            request_id,
+            source_ip,
+        )
+        return {"success": True}
+    except Exception as e:
+        err = _clip_error(str(e))
+        lower_err = err.lower()
+        status_code = 500
+        if "already running" in lower_err:
+            status_code = 409
+        elif "invalid" in lower_err or "not found" in lower_err:
+            status_code = 400
+
+        logger.exception(
+            "schedule_start failed exam_id=%s request_id=%s source_ip=%s error=%s",
+            exam_id,
+            request_id,
+            source_ip,
+            err,
+        )
+        return JSONResponse(
+            status_code=status_code,
+            content={"success": False, "error": err},
+        )
+    finally:
+        exam_manager.skip_start_sync = False
 @app.post("/exam/start")
 async def start_exam(request: Request):
     try:
