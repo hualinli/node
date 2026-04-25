@@ -4,3 +4,4 @@ backend/models
 snapshots
 archives
 classrooms.json
+.DS_Store
