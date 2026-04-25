@@ -128,15 +128,19 @@ class HeartbeatManager:
 
                 if response.status_code == 200:
                     res_data = response.json()
+                    # 当 control-center 返回 success=false 时，保持静默（不记录日志）
                     if not res_data.get("success"):
-                        self.logger.warning(f"Heartbeat reported success=false: {res_data}")
+                        pass
                 else:
-                    self.logger.error(f"Heartbeat failed with status code: {response.status_code}")
+                    # 上报失败时不记录日志，避免大量噪音
+                    pass
 
-            except requests.exceptions.RequestException as e:
-                self.logger.error("Heartbeat request failed: %s", e, exc_info=True)
-            except Exception as e:
-                self.logger.error("Unexpected error in heartbeat: %s", e, exc_info=True)
+            except requests.exceptions.RequestException:
+                # 网络或请求异常时保持静默
+                pass
+            except Exception:
+                # 其他异常保持静默
+                pass
 
             # 等待下一次上报，支持快速退出
             self.stop_event.wait(self.interval)
