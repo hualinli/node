@@ -241,13 +241,19 @@ def control(action: str):
     if action == "start_inference":
         engine.inferring_event.set()
     elif action == "stop_inference" or action == "stop":
-        engine.video_event.clear()
-        engine.inferring_event.clear()
+        if exam_manager.exam_running:
+            exam_manager.stop_exam(raise_if_not_running=False, reason=f"manual debug action: {action}")
+        else:
+            engine.video_event.clear()
+            engine.inferring_event.clear()
     elif action == "start_video" or action == "start":
         engine.inferring_event.set()
         engine.video_event.set()
     elif action == "stop_video":
-        engine.video_event.clear()
+        if exam_manager.exam_running:
+            exam_manager.stop_exam(raise_if_not_running=False, reason=f"manual debug action: {action}")
+        else:
+            engine.video_event.clear()
     else:
         return JSONResponse(status_code=400, content={"success": False, "error": "Invalid action"})
     return {"success": True, "action": action}

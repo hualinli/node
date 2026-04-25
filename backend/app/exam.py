@@ -136,15 +136,24 @@ class ExamManager:
             except Exception as e:
                 self.logger.exception("Start callback error: %s", e)
 
-    def stop_exam(self):
+    def stop_exam(self, raise_if_not_running: bool = True, reason: Optional[str] = None):
         """停止考试
 
+        Args:
+            raise_if_not_running: 无考试进行时是否抛异常
+            reason: 停考原因（用于日志）
+
         Raises:
-            Exception: 如果没有考试在运行
+            Exception: 如果没有考试在运行且 raise_if_not_running=True
         """
         with self.lock:  # 加锁保护状态检查和修改
             if not self.exam_running:
-                raise Exception("No exam is currently running")
+                if raise_if_not_running:
+                    raise Exception("No exam is currently running")
+                return False
+
+            if reason:
+                self.logger.warning("Stopping exam due to: %s", reason)
 
             # 停止推理和视频
             self.engine.inferring_event.clear()
@@ -184,7 +193,7 @@ class ExamManager:
             self.frame_counter = 0  # 重置帧计数器
 
             # 归档当前考试的截图
-            if self.current_snapshot_dir and os.path.exists(self.current_snapshot_dir):
+            if self.current_snapshot_dir and self.local_exam_id and os.path.exists(self.current_snapshot_dir):
                 archives_root = self.engine.config.get_path("ARCHIVES_DIR", "archives")
                 archive_dir = os.path.join(archives_root, self.local_exam_id)
                 os.makedirs(archives_root, exist_ok=True)
@@ -195,6 +204,8 @@ class ExamManager:
 
             if self.timer_thread and self.timer_thread.is_alive():
                 self.timer_thread = None  # 让它自然死亡
+
+        return True
 
     def _start_tracking(self):
         """启动跟踪"""

@@ -52,6 +52,16 @@ class InferenceEngine:
         # 跟踪器相关 END----
 
         self.exam_manager = None  # 考试管理器引用
+
+    def _stop_exam_on_engine_failure(self, reason: str):
+        """引擎故障时尝试兜底停考，避免考试状态残留。"""
+        if not self.exam_manager:
+            return
+        try:
+            self.exam_manager.stop_exam(raise_if_not_running=False, reason=reason)
+        except Exception as e:
+            self.logger.exception("Failed to stop exam on engine failure: %s", e)
+
     def set_video_source(self, video_path):
         with self.lock:
             self.current_video_path = video_path
@@ -112,6 +122,7 @@ class InferenceEngine:
                 )
                 self.video_event.clear()
                 self.inferring_event.clear()
+                self._stop_exam_on_engine_failure(self.last_error)
                 # 回退到空闲状态后清空错误，避免心跳一直维持 error。
                 self.last_error = None
                 self.logger.info("Video source unavailable, fallback to idle state")
@@ -165,6 +176,7 @@ class InferenceEngine:
                             )
                             self.video_event.clear()
                             self.inferring_event.clear()
+                            self._stop_exam_on_engine_failure(self.last_error)
                             # 回退到空闲状态后清空错误，避免心跳一直维持 error。
                             self.last_error = None
                             self.logger.info("Video reconnect exhausted, fallback to idle state")
@@ -245,6 +257,7 @@ class InferenceEngine:
                 self.last_error = f"模型加载失败(重试耗尽): {last_model_error}"
                 self.logger.error(self.last_error)
                 self.inferring_event.clear()
+                self._stop_exam_on_engine_failure(self.last_error)
                 continue
 
             while self.inferring_event.is_set() and not self.exit_event.is_set():
